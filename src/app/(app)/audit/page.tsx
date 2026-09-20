@@ -11,6 +11,7 @@ import {
   matchesKeyword,
   type AdvancedFilterState,
 } from "@/lib/filters";
+import { formatDbError, isMissingRelationError } from "@/lib/db-error";
 import { canViewAudit } from "@/lib/rbac";
 import { createClient } from "@/lib/supabase/client";
 import type { AuditLog, Profile } from "@/lib/types";
@@ -44,14 +45,22 @@ export default function AuditPage() {
         .select("*")
         .order("created_at", { ascending: false })
         .limit(500);
-      if (loadError) throw loadError;
+
+      if (loadError) {
+        if (isMissingRelationError(loadError)) {
+          setLogs([]);
+          setError(
+            "ยังไม่มีตาราง audit_logs — เปิด Supabase SQL Editor แล้วรันไฟล์ supabase/bonus_migration.sql จากนั้นรีเฟรชหน้านี้",
+          );
+          return;
+        }
+        throw loadError;
+      }
       setLogs((data || []) as AuditLog[]);
     }
 
     load()
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : "โหลด Audit ไม่สำเร็จ"),
-      )
+      .catch((err) => setError(formatDbError(err, "โหลด Audit ไม่สำเร็จ")))
       .finally(() => setLoading(false));
   }, []);
 
@@ -107,13 +116,9 @@ export default function AuditPage() {
 
       {error && (
         <Alert
-          type="error"
+          type={error.includes("bonus_migration") ? "warning" : "error"}
           showIcon
-          message={
-            error.includes("audit_logs")
-              ? "ยังไม่มีตาราง audit_logs — รัน supabase/bonus_migration.sql ใน Supabase"
-              : error
-          }
+          message={error}
         />
       )}
       {filterError && <Alert type="warning" showIcon message={filterError} />}

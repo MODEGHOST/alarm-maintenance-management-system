@@ -10,7 +10,6 @@ import {
 } from "react";
 import { notification } from "antd";
 import { createClient } from "@/lib/supabase/client";
-import { OPEN_MAINTENANCE_STATUSES } from "@/lib/types";
 
 type AlertCounts = {
   openAlarms: number;
@@ -34,20 +33,29 @@ export function AlertProvider({ children }: { children: React.ReactNode }) {
 
   const refresh = useCallback(async () => {
     const supabase = createClient();
-    const [alarmsRes, maintRes, machinesRes] = await Promise.all([
+    const [alarmsRes, machinesRes] = await Promise.all([
       supabase
         .from("alarms")
         .select("id", { count: "exact", head: true })
         .neq("status", "Closed"),
       supabase
-        .from("maintenance_records")
-        .select("id", { count: "exact", head: true })
-        .in("status", OPEN_MAINTENANCE_STATUSES),
-      supabase
         .from("machines")
         .select("id", { count: "exact", head: true })
         .eq("status", "Alarm"),
     ]);
+
+    // ใช้ neq Closed เป็นหลัก (รองรับ DB ที่ยังไม่มี Waiting Part)
+    let maintRes = await supabase
+      .from("maintenance_records")
+      .select("id", { count: "exact", head: true })
+      .neq("status", "Closed");
+
+    if (maintRes.error) {
+      maintRes = await supabase
+        .from("maintenance_records")
+        .select("id", { count: "exact", head: true })
+        .in("status", ["Open", "In Progress"]);
+    }
 
     setCounts({
       openAlarms: alarmsRes.count || 0,

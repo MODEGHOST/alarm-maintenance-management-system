@@ -15,7 +15,6 @@ import { BarChart, DonutStat } from "@/components/Charts";
 import { createClient } from "@/lib/supabase/client";
 import { MACHINE_STATUS_LABELS, WORK_STATUS_LABELS } from "@/lib/labels";
 import type { Alarm, Machine, MachineStatus, MaintenanceRecord } from "@/lib/types";
-import { OPEN_MAINTENANCE_STATUSES } from "@/lib/types";
 
 type Stats = {
   totalMachines: number;
@@ -58,7 +57,7 @@ export default function DashboardPage() {
               .select(
                 "*, machines(machine_id, machine_name), profiles!technician_id(full_name, email)",
               )
-              .in("status", OPEN_MAINTENANCE_STATUSES)
+              .neq("status", "Closed")
               .order("created_at", { ascending: false }),
             supabase
               .from("alarms")

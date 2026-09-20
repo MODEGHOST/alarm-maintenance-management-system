@@ -42,6 +42,7 @@ import type {
   Profile,
 } from "@/lib/types";
 import { MAINTENANCE_STATUSES } from "@/lib/types";
+import { formatDbError } from "@/lib/db-error";
 import { validateDateRange, validateMaintenanceForm } from "@/lib/validations";
 import { syncMachineAfterMaintenanceChange } from "@/lib/workflow";
 
@@ -92,36 +93,63 @@ export default function MaintenancePage() {
       setProfile(profileData as Profile);
     }
 
-    const [machinesRes, recordsRes, techRes] = await Promise.all([
-      supabase.from("machines").select("*").order("machine_id"),
-      supabase
+    const machinesRes = await supabase
+      .from("machines")
+      .select("*")
+      .order("machine_id");
+    if (machinesRes.error) throw machinesRes.error;
+    setMachines((machinesRes.data || []) as Machine[]);
+
+    // ลอง join ฟิลด์โบนัสก่อน ถ้า DB ยังไม่ migrate จะ fallback อัตโนมัติ
+    let recordsRes = await supabase
+      .from("maintenance_records")
+      .select(
+        "*, machines(machine_id, machine_name), profiles!technician_id(full_name, email, phone, employee_code, specialty)",
+      )
+      .order("created_at", { ascending: false });
+
+    if (recordsRes.error) {
+      recordsRes = await supabase
         .from("maintenance_records")
         .select(
-          "*, machines(machine_id, machine_name), profiles!technician_id(full_name, email, phone, employee_code, specialty)",
+          "*, machines(machine_id, machine_name), profiles!technician_id(full_name, email)",
         )
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("profiles")
-        .select("*")
-        .in("role", ["technician", "admin"])
-        .order("full_name"),
-    ]);
+        .order("created_at", { ascending: false });
+    }
 
-    if (machinesRes.error) throw machinesRes.error;
+    if (recordsRes.error) {
+      // fallback สุดท้าย: ไม่ join ช่าง
+      recordsRes = await supabase
+        .from("maintenance_records")
+        .select("*, machines(machine_id, machine_name)")
+        .order("created_at", { ascending: false });
+    }
+
     if (recordsRes.error) throw recordsRes.error;
-    if (techRes.error) throw techRes.error;
-
-    setMachines((machinesRes.data || []) as Machine[]);
     setRecords((recordsRes.data || []) as MaintenanceRecord[]);
+
+    let techRes = await supabase
+      .from("profiles")
+      .select("*")
+      .in("role", ["technician", "admin"])
+      .order("full_name");
+
+    if (techRes.error) {
+      techRes = await supabase
+        .from("profiles")
+        .select("id, email, full_name, role, created_at")
+        .in("role", ["technician", "admin"])
+        .order("full_name");
+    }
+
+    if (techRes.error) throw techRes.error;
     setTechnicians((techRes.data || []) as Profile[]);
   }
 
   useEffect(() => {
     load()
       .catch((err) =>
-        setError(
-          err instanceof Error ? err.message : "โหลดงานบำรุงรักษาไม่สำเร็จ",
-        ),
+        setError(formatDbError(err, "โหลดงานบำรุงรักษาไม่สำเร็จ")),
       )
       .finally(() => setLoading(false));
   }, []);
@@ -239,7 +267,7 @@ export default function MaintenancePage() {
           .update(payload)
           .eq("id", editingId);
         if (updateError) {
-          setError(updateError.message);
+          setError(formatDbError(updateError));
           return;
         }
         await writeAuditLog({
@@ -257,7 +285,7 @@ export default function MaintenancePage() {
           .select("id")
           .single();
         if (insertError) {
-          setError(insertError.message);
+          setError(formatDbError(insertError));
           return;
         }
         await writeAuditLog({
