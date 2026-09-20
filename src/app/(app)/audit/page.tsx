@@ -107,7 +107,7 @@ export default function AuditPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="page-stack">
       <PageIntro
         eyebrow="Audit Log"
         title="บันทึกการใช้งาน"

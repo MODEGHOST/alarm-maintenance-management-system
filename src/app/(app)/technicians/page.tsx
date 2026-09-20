@@ -194,7 +194,7 @@ export default function TechniciansPage() {
   );
 
   return (
-    <div className="space-y-4">
+    <div className="page-stack">
       <PageIntro
         eyebrow="Technicians"
         title="ข้อมูลช่างเทคนิค"

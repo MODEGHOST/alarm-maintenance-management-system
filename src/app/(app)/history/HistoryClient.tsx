@@ -136,7 +136,7 @@ export default function HistoryClient() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="page-stack">
       <PageIntro
         eyebrow="Machine History"
         title="ประวัติเครื่องจักร"

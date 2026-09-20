@@ -59,7 +59,7 @@ export function AdvancedFilterBar({
           <FilterOutlined />
           <span>ตัวกรองขั้นสูง</span>
         </div>
-        <Space wrap size={[8, 8]} style={{ width: "100%" }}>
+        <Space wrap size={[12, 12]} style={{ width: "100%" }}>
           <Input
             allowClear
             style={{ minWidth: 200 }}

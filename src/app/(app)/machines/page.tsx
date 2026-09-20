@@ -350,8 +350,8 @@ export default function MachinesPage() {
   ];
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="page-stack">
+      <div className="page-head">
         <PageIntro
           eyebrow="Machine Master"
           title="ทะเบียนเครื่องจักร"

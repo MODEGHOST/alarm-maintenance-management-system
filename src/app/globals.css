@@ -512,9 +512,24 @@ button {
 
 .app-main {
   width: 100%;
-  max-width: 1100px;
+  max-width: 1120px;
   margin: 0 auto;
-  padding: 24px 20px 40px;
+  padding: 28px 24px 56px;
+}
+
+/* ระยะห่างมาตรฐานระหว่างบล็อกในทุกหน้า */
+.page-stack {
+  display: grid;
+  gap: 22px;
+}
+
+.page-stack > .page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 2px;
 }
 
 .app-alert-strip {
@@ -564,7 +579,8 @@ button {
 
 
 .page-intro {
-  margin-bottom: 18px;
+  margin-bottom: 0;
+  max-width: 64ch;
 }
 
 .page-intro-eyebrow {
@@ -577,20 +593,22 @@ button {
 }
 
 .page-intro h2 {
-  margin: 4px 0 0;
+  margin: 6px 0 0;
   font-size: 1.7rem;
   font-family: var(--font-display), Georgia, serif;
+  line-height: 1.25;
 }
 
 .page-intro p {
-  margin: 8px 0 0;
-  color: #64748b;
+  margin: 10px 0 0;
+  color: var(--muted);
   max-width: 60ch;
+  line-height: 1.6;
 }
 
 .dash {
   display: grid;
-  gap: 18px;
+  gap: 22px;
   animation: auth-fade 0.55s ease both;
 }
 
@@ -668,15 +686,15 @@ button {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 16px;
-  padding: 18px;
+  padding: 20px 22px;
 }
 
 .dash-section-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 14px;
+  gap: 12px;
+  margin-bottom: 18px;
 }
 
 .dash-section-head h3,
@@ -755,16 +773,16 @@ button {
 .dash-attention {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 14px;
+  gap: 18px;
 }
 
 .attention-panel {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 16px;
-  padding: 16px;
+  padding: 18px 20px;
   display: grid;
-  gap: 12px;
+  gap: 14px;
 }
 
 .attention-alarm {
@@ -948,7 +966,16 @@ button {
 
 .ui-card .ant-card-head {
   border-bottom-color: var(--border);
-  min-height: 48px;
+  min-height: 52px;
+  padding: 0 20px !important;
+}
+
+.ui-card .ant-card-body {
+  padding: 18px 20px 20px !important;
+}
+
+.ui-card.ant-card-small > .ant-card-body {
+  padding: 16px 18px !important;
 }
 
 .ui-card .ant-form-item-label > label {
@@ -964,13 +991,9 @@ button {
   border-color: var(--border);
 }
 
-.page-intro p {
-  color: var(--muted);
-}
-
 .filter-card .filter-bar {
   display: grid;
-  gap: 10px;
+  gap: 14px;
 }
 
 .filter-bar-title {
@@ -985,14 +1008,14 @@ button {
 .dash-charts {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
+  gap: 18px;
 }
 
 .chart-panel {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 16px;
-  padding: 16px;
+  padding: 18px 20px;
 }
 
 .chart-panel h4 {
@@ -1110,19 +1133,21 @@ button {
 .history-grid {
   display: grid;
   grid-template-columns: 0.9fr 1.1fr;
-  gap: 14px;
+  gap: 18px;
 }
 
 .history-meta {
-  margin: 12px 0 0;
+  margin: 14px 0 0;
   color: var(--muted);
   font-size: 13px;
+  line-height: 1.5;
 }
 
 .history-detail {
-  margin: 4px 0;
+  margin: 6px 0;
   color: var(--muted);
   font-size: 13px;
+  line-height: 1.45;
 }
 
 @media (max-width: 980px) {
@@ -1160,8 +1185,16 @@ button {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 14px;
-  padding: 14px 16px 8px;
-  margin-bottom: 4px;
+  padding: 18px 20px 14px;
+}
+
+.ant-table-wrapper .ant-table {
+  margin-block: 4px;
+}
+
+.ant-table-tbody > tr > td {
+  padding-top: 14px !important;
+  padding-bottom: 14px !important;
 }
 
 
