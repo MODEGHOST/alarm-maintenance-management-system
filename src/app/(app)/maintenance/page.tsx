@@ -19,13 +19,21 @@ import {
   CheckCircleOutlined,
   EditOutlined,
   PlusOutlined,
-  SearchOutlined,
 } from "@ant-design/icons";
+import { AdvancedFilterBar } from "@/components/AdvancedFilterBar";
 import { DateTimeField } from "@/components/DateTimeField";
 import { PageIntro } from "@/components/PageIntro";
 import { useAlertCounts } from "@/components/AlertProvider";
-import { canManageMaintenance } from "@/lib/rbac";
+import { writeAuditLog } from "@/lib/audit";
+import { exportExcelCsv } from "@/lib/export";
+import {
+  emptyAdvancedFilter,
+  inDateRange,
+  matchesKeyword,
+  type AdvancedFilterState,
+} from "@/lib/filters";
 import { WORK_STATUS_LABELS } from "@/lib/labels";
+import { canManageMaintenance } from "@/lib/rbac";
 import { createClient } from "@/lib/supabase/client";
 import type {
   Machine,
@@ -34,7 +42,7 @@ import type {
   Profile,
 } from "@/lib/types";
 import { MAINTENANCE_STATUSES } from "@/lib/types";
-import { validateMaintenanceForm } from "@/lib/validations";
+import { validateDateRange, validateMaintenanceForm } from "@/lib/validations";
 import { syncMachineAfterMaintenanceChange } from "@/lib/workflow";
 
 const emptyForm = {
@@ -43,27 +51,31 @@ const emptyForm = {
   description: "",
   status: "Open" as MaintenanceStatus,
   scheduled_at: "",
+  technician_id: "",
 };
 
 const statusColor: Record<MaintenanceStatus, string> = {
   Open: "error",
   "In Progress": "warning",
+  "Waiting Part": "purple",
   Closed: "success",
 };
 
 export default function MaintenancePage() {
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [technicians, setTechnicians] = useState<Profile[]>([]);
   const [machines, setMachines] = useState<Machine[]>([]);
   const [records, setRecords] = useState<MaintenanceRecord[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
-  const [filterMachine, setFilterMachine] = useState("");
-  const [filterStatus, setFilterStatus] = useState("");
+  const [filters, setFilters] =
+    useState<AdvancedFilterState>(emptyAdvancedFilter);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const { refresh: refreshAlerts } = useAlertCounts();
+  const canEdit = canManageMaintenance(profile);
 
   async function load() {
     const supabase = createClient();
@@ -80,21 +92,28 @@ export default function MaintenancePage() {
       setProfile(profileData as Profile);
     }
 
-    const [machinesRes, recordsRes] = await Promise.all([
+    const [machinesRes, recordsRes, techRes] = await Promise.all([
       supabase.from("machines").select("*").order("machine_id"),
       supabase
         .from("maintenance_records")
         .select(
-          "*, machines(machine_id, machine_name), profiles!technician_id(full_name, email)",
+          "*, machines(machine_id, machine_name), profiles!technician_id(full_name, email, phone, employee_code, specialty)",
         )
         .order("created_at", { ascending: false }),
+      supabase
+        .from("profiles")
+        .select("*")
+        .in("role", ["technician", "admin"])
+        .order("full_name"),
     ]);
 
     if (machinesRes.error) throw machinesRes.error;
     if (recordsRes.error) throw recordsRes.error;
+    if (techRes.error) throw techRes.error;
 
     setMachines((machinesRes.data || []) as Machine[]);
     setRecords((recordsRes.data || []) as MaintenanceRecord[]);
+    setTechnicians((techRes.data || []) as Profile[]);
   }
 
   useEffect(() => {
@@ -107,26 +126,45 @@ export default function MaintenancePage() {
       .finally(() => setLoading(false));
   }, []);
 
+  const filterError = validateDateRange(filters.dateFrom, filters.dateTo);
+
   const filtered = useMemo(() => {
+    if (filterError) return [];
     return records.filter((record) => {
       const machineLabel = `${record.machines?.machine_id || ""} ${record.machines?.machine_name || ""}`;
-      const matchMachine =
-        !filterMachine ||
-        machineLabel.toLowerCase().includes(filterMachine.toLowerCase()) ||
-        record.title.toLowerCase().includes(filterMachine.toLowerCase());
-      const matchStatus = !filterStatus || record.status === filterStatus;
-      return matchMachine && matchStatus;
+      const techLabel = `${record.profiles?.full_name || ""} ${record.profiles?.email || ""}`;
+      return (
+        matchesKeyword(
+          `${machineLabel} ${record.title} ${record.description || ""} ${techLabel}`,
+          filters.keyword,
+        ) &&
+        (!filters.status || record.status === filters.status) &&
+        (!filters.machineId || record.machine_uuid === filters.machineId) &&
+        inDateRange(
+          record.scheduled_at || record.created_at,
+          filters.dateFrom,
+          filters.dateTo,
+        )
+      );
     });
-  }, [records, filterMachine, filterStatus]);
+  }, [records, filters, filterError]);
 
   function openCreate() {
+    if (!canEdit) {
+      message.warning("Viewer ดูได้อย่างเดียว");
+      return;
+    }
     setEditingId(null);
-    setForm(emptyForm);
+    setForm({ ...emptyForm, technician_id: profile?.id || "" });
     setError(null);
     setModalOpen(true);
   }
 
   function openEdit(record: MaintenanceRecord) {
+    if (!canEdit) {
+      message.warning("Viewer ดูได้อย่างเดียว");
+      return;
+    }
     setEditingId(record.id);
     setForm({
       machine_uuid: record.machine_uuid,
@@ -134,6 +172,7 @@ export default function MaintenancePage() {
       description: record.description || "",
       status: record.status,
       scheduled_at: record.scheduled_at || "",
+      technician_id: record.technician_id || "",
     });
     setError(null);
     setModalOpen(true);
@@ -145,9 +184,25 @@ export default function MaintenancePage() {
     setForm(emptyForm);
   }
 
+  function onExport() {
+    exportExcelCsv(
+      `maintenance-${new Date().toISOString().slice(0, 10)}`,
+      ["เครื่อง", "หัวข้อ", "ช่าง", "สถานะ", "นัดหมาย", "รายละเอียด"],
+      filtered.map((r) => [
+        r.machines?.machine_id || "",
+        r.title,
+        r.profiles?.full_name || r.profiles?.email || "",
+        WORK_STATUS_LABELS[r.status],
+        r.scheduled_at ? new Date(r.scheduled_at).toLocaleString("th-TH") : "",
+        r.description || "",
+      ]),
+    );
+    message.success("ส่งออก CSV/Excel แล้ว");
+  }
+
   async function onSubmit() {
     setError(null);
-    if (!canManageMaintenance(profile)) {
+    if (!canEdit) {
       setError("คุณไม่มีสิทธิ์จัดการงานบำรุงรักษา");
       return;
     }
@@ -155,6 +210,7 @@ export default function MaintenancePage() {
       machine_uuid: form.machine_uuid,
       title: form.title,
       description: form.description,
+      scheduled_at: form.scheduled_at,
     });
     if (validationError) {
       setError(validationError);
@@ -168,6 +224,7 @@ export default function MaintenancePage() {
       title: form.title.trim(),
       description: form.description.trim() || null,
       status: form.status,
+      technician_id: form.technician_id || profile?.id || null,
       scheduled_at: form.scheduled_at
         ? new Date(form.scheduled_at).toISOString()
         : null,
@@ -185,36 +242,35 @@ export default function MaintenancePage() {
           setError(updateError.message);
           return;
         }
+        await writeAuditLog({
+          profile,
+          action: "update",
+          entityType: "maintenance",
+          entityId: editingId,
+          summary: `อัปเดตงานซ่อม ${payload.title} (${payload.status})`,
+        });
         message.success("อัปเดตงานบำรุงรักษาแล้ว");
       } else {
-        const { error: insertError } = await supabase
+        const { data, error: insertError } = await supabase
           .from("maintenance_records")
-          .insert({
-            ...payload,
-            technician_id: profile?.id || null,
-          });
+          .insert(payload)
+          .select("id")
+          .single();
         if (insertError) {
           setError(insertError.message);
           return;
         }
+        await writeAuditLog({
+          profile,
+          action: "create",
+          entityType: "maintenance",
+          entityId: data?.id,
+          summary: `สร้างงานซ่อม ${payload.title}`,
+        });
         message.success("เพิ่มงานบำรุงรักษาแล้ว");
       }
 
       await syncMachineAfterMaintenanceChange(form.machine_uuid, form.status);
-
-      // If closed, also close open alarms on same machine
-      if (form.status === "Closed") {
-        await supabase
-          .from("alarms")
-          .update({
-            status: "Closed",
-            updated_at: new Date().toISOString(),
-          })
-          .eq("machine_uuid", form.machine_uuid)
-          .neq("status", "Closed");
-        await syncMachineAfterMaintenanceChange(form.machine_uuid, "Closed");
-      }
-
       closeModal();
       await load();
       await refreshAlerts();
@@ -224,6 +280,7 @@ export default function MaintenancePage() {
   }
 
   async function completeJob(record: MaintenanceRecord) {
+    if (!canEdit) return;
     const supabase = createClient();
     const { error: updateError } = await supabase
       .from("maintenance_records")
@@ -233,45 +290,36 @@ export default function MaintenancePage() {
         updated_at: new Date().toISOString(),
       })
       .eq("id", record.id);
-
     if (updateError) {
       message.error(updateError.message);
       return;
     }
-
-    await supabase
-      .from("alarms")
-      .update({
-        status: "Closed",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("machine_uuid", record.machine_uuid)
-      .neq("status", "Closed");
-
     await syncMachineAfterMaintenanceChange(record.machine_uuid, "Closed");
-    message.success("ปิดงานซ่อมแล้ว และพยายามคืนสถานะเครื่องให้ปกติ");
+    await writeAuditLog({
+      profile,
+      action: "workflow",
+      entityType: "maintenance",
+      entityId: record.id,
+      summary: `ปิดงานซ่อม ${record.title}`,
+    });
+    message.success("ซ่อมเสร็จแล้ว");
     await load();
     await refreshAlerts();
   }
 
   const columns = [
     {
-      title: "เครื่องจักร",
+      title: "เครื่อง",
       key: "machine",
-      render: (_: unknown, record: MaintenanceRecord) =>
-        record.machines?.machine_id || "-",
+      render: (_: unknown, row: MaintenanceRecord) =>
+        row.machines?.machine_id || "-",
     },
+    { title: "หัวข้อ", dataIndex: "title", key: "title" },
     {
-      title: "หัวข้อ",
-      dataIndex: "title",
-      key: "title",
-      render: (v: string) => <strong>{v}</strong>,
-    },
-    {
-      title: "ช่างเทคนิค",
+      title: "ช่าง",
       key: "tech",
-      render: (_: unknown, record: MaintenanceRecord) =>
-        record.profiles?.full_name || record.profiles?.email || "-",
+      render: (_: unknown, row: MaintenanceRecord) =>
+        row.profiles?.full_name || row.profiles?.email || "-",
     },
     {
       title: "สถานะ",
@@ -282,7 +330,7 @@ export default function MaintenancePage() {
       ),
     },
     {
-      title: "กำหนดเวลา",
+      title: "นัดหมาย",
       dataIndex: "scheduled_at",
       key: "scheduled_at",
       render: (v: string | null) =>
@@ -292,30 +340,32 @@ export default function MaintenancePage() {
       title: "จัดการ",
       key: "actions",
       width: 220,
-      render: (_: unknown, record: MaintenanceRecord) => (
-        <Space wrap size={0}>
-          <Button
-            type="link"
-            icon={<EditOutlined />}
-            onClick={() => openEdit(record)}
-          >
-            แก้ไข
-          </Button>
-          {record.status !== "Closed" && (
-            <Popconfirm
-              title="ปิดงานซ่อมและคืนเครื่องให้ปกติ?"
-              description="จะปิดงานนี้ และปิด Alarm ที่ค้างของเครื่องเดียวกัน"
-              okText="ปิดงาน"
-              cancelText="ยกเลิก"
-              onConfirm={() => completeJob(record)}
+      render: (_: unknown, row: MaintenanceRecord) =>
+        !canEdit ? (
+          <Tag>ดูอย่างเดียว</Tag>
+        ) : (
+          <Space wrap size={0}>
+            <Button
+              type="link"
+              icon={<EditOutlined />}
+              onClick={() => openEdit(row)}
             >
-              <Button type="link" icon={<CheckCircleOutlined />}>
-                ซ่อมเสร็จ
-              </Button>
-            </Popconfirm>
-          )}
-        </Space>
-      ),
+              แก้ไข
+            </Button>
+            {row.status !== "Closed" && (
+              <Popconfirm
+                title="ปิดงานซ่อมนี้?"
+                okText="ซ่อมเสร็จ"
+                cancelText="ยกเลิก"
+                onConfirm={() => completeJob(row)}
+              >
+                <Button type="link" icon={<CheckCircleOutlined />}>
+                  ซ่อมเสร็จ
+                </Button>
+              </Popconfirm>
+            )}
+          </Space>
+        ),
     },
   ];
 
@@ -323,13 +373,15 @@ export default function MaintenancePage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <PageIntro
-          eyebrow="Maintenance Record"
+          eyebrow="Maintenance"
           title="งานบำรุงรักษา"
-          description="ขั้นที่ 2: รับงานซ่อมจาก Alarm หรือเปิดงานเอง → ซ่อมเสร็จกด 'ซ่อมเสร็จ' เพื่อปิดงานและคืนเครื่องให้ปกติ"
+          description="จัดการงานซ่อม/PM รวมสถานะรออะไหล่ (Waiting Part) และมอบหมายช่าง"
         />
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          เปิดงานบำรุงรักษา
-        </Button>
+        {canEdit && (
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+            เพิ่มงานซ่อม
+          </Button>
+        )}
       </div>
 
       {error && !modalOpen && (
@@ -341,33 +393,24 @@ export default function MaintenancePage() {
           onClose={() => setError(null)}
         />
       )}
+      {filterError && <Alert type="warning" showIcon message={filterError} />}
 
-      <Card size="small" className="ui-card">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Input
-            allowClear
-            prefix={<SearchOutlined />}
-            placeholder="ค้นหาเครื่องหรือหัวข้องาน"
-            value={filterMachine}
-            onChange={(e) => setFilterMachine(e.target.value)}
-          />
-          <Select
-            allowClear
-            placeholder="กรองสถานะ"
-            value={filterStatus || undefined}
-            onChange={(v) => setFilterStatus(v || "")}
-            options={MAINTENANCE_STATUSES.map((status) => ({
-              value: status,
-              label: WORK_STATUS_LABELS[status],
-            }))}
-          />
-        </div>
-      </Card>
+      <AdvancedFilterBar
+        value={filters}
+        onChange={setFilters}
+        keywordPlaceholder="ค้นหาหัวข้อ / เครื่อง / ช่าง"
+        statusOptions={MAINTENANCE_STATUSES.map((status) => ({
+          value: status,
+          label: WORK_STATUS_LABELS[status],
+        }))}
+        machineOptions={machines.map((m) => ({
+          value: m.id,
+          label: `${m.machine_id} — ${m.machine_name}`,
+        }))}
+        onExport={onExport}
+      />
 
-      <Card
-        className="ui-card"
-        title={`รายการงานบำรุงรักษา (${filtered.length})`}
-      >
+      <Card className="ui-card" title={`รายการงาน (${filtered.length})`}>
         <Table
           rowKey="id"
           loading={loading}
@@ -381,11 +424,11 @@ export default function MaintenancePage() {
 
       <Modal
         centered
-        title={editingId ? "แก้ไขงานบำรุงรักษา" : "เปิดงานบำรุงรักษาใหม่"}
+        title={editingId ? "แก้ไขงานบำรุงรักษา" : "เพิ่มงานบำรุงรักษา"}
         open={modalOpen}
         onCancel={closeModal}
         onOk={onSubmit}
-        okText={editingId ? "บันทึก" : "เปิดงาน"}
+        okText="บันทึก"
         cancelText="ยกเลิก"
         confirmLoading={saving}
         destroyOnHidden
@@ -404,7 +447,6 @@ export default function MaintenancePage() {
             <Select
               showSearch
               optionFilterProp="label"
-              placeholder="เลือกเครื่อง"
               value={form.machine_uuid || undefined}
               onChange={(machine_uuid) =>
                 setForm((f) => ({ ...f, machine_uuid }))
@@ -415,11 +457,32 @@ export default function MaintenancePage() {
               }))}
             />
           </Form.Item>
-          <Form.Item label="หัวข้องาน" required style={{ marginBottom: 0 }}>
+          <Form.Item label="ช่างผู้รับผิดชอบ" style={{ marginBottom: 0 }}>
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              value={form.technician_id || undefined}
+              onChange={(technician_id) =>
+                setForm((f) => ({ ...f, technician_id: technician_id || "" }))
+              }
+              options={technicians.map((t) => ({
+                value: t.id,
+                label: `${t.full_name || t.email} (${t.employee_code || "ไม่มีรหัส"})`,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item
+            label="หัวข้องาน"
+            required
+            style={{ marginBottom: 0 }}
+            className="sm:col-span-2"
+          >
             <Input
               value={form.title}
-              onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
-              placeholder="เช่น เปลี่ยนไส้กรอง"
+              onChange={(e) =>
+                setForm((f) => ({ ...f, title: e.target.value }))
+              }
             />
           </Form.Item>
           <Form.Item
@@ -428,15 +491,14 @@ export default function MaintenancePage() {
             className="sm:col-span-2"
           >
             <Input.TextArea
-              rows={2}
+              rows={3}
               value={form.description}
               onChange={(e) =>
                 setForm((f) => ({ ...f, description: e.target.value }))
               }
-              placeholder="รายละเอียดงาน"
             />
           </Form.Item>
-          <Form.Item label="กำหนดเวลา" style={{ marginBottom: 0 }}>
+          <Form.Item label="วันเวลานัดหมาย" style={{ marginBottom: 0 }}>
             <DateTimeField
               value={form.scheduled_at}
               onChange={(scheduled_at) =>

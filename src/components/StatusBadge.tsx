@@ -10,6 +10,7 @@ const machineColors: Record<string, string> = {
 const workColors: Record<string, string> = {
   Open: "bg-red-100 text-red-800",
   "In Progress": "bg-amber-100 text-amber-800",
+  "Waiting Part": "bg-violet-100 text-violet-800",
   Closed: "bg-emerald-100 text-emerald-800",
 };
 

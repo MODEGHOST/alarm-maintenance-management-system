@@ -1,4 +1,9 @@
-import type { MachineStatus, AlarmStatus, MaintenanceStatus, UserRole } from "@/lib/types";
+import type {
+  MachineStatus,
+  AlarmStatus,
+  MaintenanceStatus,
+  UserRole,
+} from "@/lib/types";
 
 export const MACHINE_STATUS_LABELS: Record<MachineStatus, string> = {
   Running: "กำลังทำงาน",
@@ -13,12 +18,14 @@ export const WORK_STATUS_LABELS: Record<
 > = {
   Open: "เปิด",
   "In Progress": "กำลังดำเนินการ",
+  "Waiting Part": "รออะไหล่",
   Closed: "ปิดแล้ว",
 };
 
 export const ROLE_LABELS: Record<UserRole, string> = {
   admin: "ผู้ดูแลระบบ",
   technician: "ช่างเทคนิค",
+  viewer: "ผู้ดูอย่างเดียว",
 };
 
 export function machineStatusLabel(status: string) {
@@ -26,7 +33,7 @@ export function machineStatusLabel(status: string) {
 }
 
 export function workStatusLabel(status: string) {
-  return WORK_STATUS_LABELS[status as AlarmStatus] || status;
+  return WORK_STATUS_LABELS[status as AlarmStatus | MaintenanceStatus] || status;
 }
 
 export function roleLabel(role: string) {

@@ -20,18 +20,26 @@ import {
   CheckCircleOutlined,
   EditOutlined,
   PlusOutlined,
-  SearchOutlined,
   ToolOutlined,
 } from "@ant-design/icons";
+import { AdvancedFilterBar } from "@/components/AdvancedFilterBar";
 import { DateTimeField } from "@/components/DateTimeField";
 import { PageIntro } from "@/components/PageIntro";
 import { useAlertCounts } from "@/components/AlertProvider";
-import { canManageAlarms } from "@/lib/rbac";
+import { writeAuditLog } from "@/lib/audit";
+import { exportExcelCsv } from "@/lib/export";
+import {
+  emptyAdvancedFilter,
+  inDateRange,
+  matchesKeyword,
+  type AdvancedFilterState,
+} from "@/lib/filters";
 import { WORK_STATUS_LABELS } from "@/lib/labels";
+import { canManageAlarms } from "@/lib/rbac";
 import { createClient } from "@/lib/supabase/client";
 import type { Alarm, AlarmStatus, Machine, Profile } from "@/lib/types";
 import { ALARM_STATUSES } from "@/lib/types";
-import { validateAlarmForm } from "@/lib/validations";
+import { validateAlarmForm, validateDateRange } from "@/lib/validations";
 import {
   createMaintenanceFromAlarm,
   markAlarmResolved,
@@ -61,12 +69,12 @@ export default function AlarmsPage() {
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
-  const [filterMachine, setFilterMachine] = useState("");
-  const [filterStatus, setFilterStatus] = useState("");
+  const [filters, setFilters] = useState<AdvancedFilterState>(emptyAdvancedFilter);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const { refresh: refreshAlerts } = useAlertCounts();
+  const canEdit = canManageAlarms(profile);
 
   async function load() {
     const supabase = createClient();
@@ -106,19 +114,29 @@ export default function AlarmsPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  const filterError = validateDateRange(filters.dateFrom, filters.dateTo);
+
   const filtered = useMemo(() => {
+    if (filterError) return [];
     return alarms.filter((alarm) => {
       const machineLabel = `${alarm.machines?.machine_id || ""} ${alarm.machines?.machine_name || ""}`;
-      const matchMachine =
-        !filterMachine ||
-        machineLabel.toLowerCase().includes(filterMachine.toLowerCase()) ||
-        alarm.alarm_code.toLowerCase().includes(filterMachine.toLowerCase());
-      const matchStatus = !filterStatus || alarm.status === filterStatus;
-      return matchMachine && matchStatus;
+      return (
+        matchesKeyword(
+          `${machineLabel} ${alarm.alarm_code} ${alarm.alarm_description} ${alarm.cause || ""}`,
+          filters.keyword,
+        ) &&
+        (!filters.status || alarm.status === filters.status) &&
+        (!filters.machineId || alarm.machine_uuid === filters.machineId) &&
+        inDateRange(alarm.occurred_at, filters.dateFrom, filters.dateTo)
+      );
     });
-  }, [alarms, filterMachine, filterStatus]);
+  }, [alarms, filters, filterError]);
 
   function openCreate() {
+    if (!canEdit) {
+      message.warning("Viewer ดูได้อย่างเดียว ไม่สามารถเพิ่ม Alarm ได้");
+      return;
+    }
     setEditingId(null);
     setForm(emptyForm);
     setError(null);
@@ -126,6 +144,10 @@ export default function AlarmsPage() {
   }
 
   function openEdit(alarm: Alarm) {
+    if (!canEdit) {
+      message.warning("Viewer ดูได้อย่างเดียว");
+      return;
+    }
     setEditingId(alarm.id);
     setForm({
       machine_uuid: alarm.machine_uuid,
@@ -145,9 +167,25 @@ export default function AlarmsPage() {
     setForm(emptyForm);
   }
 
+  function onExport() {
+    exportExcelCsv(
+      `alarms-${new Date().toISOString().slice(0, 10)}`,
+      ["เครื่อง", "รหัส", "รายละเอียด", "สาเหตุ", "วันเวลา", "สถานะ"],
+      filtered.map((a) => [
+        a.machines?.machine_id || "",
+        a.alarm_code,
+        a.alarm_description,
+        a.cause || "",
+        new Date(a.occurred_at).toLocaleString("th-TH"),
+        WORK_STATUS_LABELS[a.status],
+      ]),
+    );
+    message.success("ส่งออก CSV/Excel แล้ว");
+  }
+
   async function onSubmit() {
     setError(null);
-    if (!canManageAlarms(profile)) {
+    if (!canEdit) {
       setError("คุณไม่มีสิทธิ์จัดการ Alarm");
       return;
     }
@@ -156,6 +194,7 @@ export default function AlarmsPage() {
       alarm_code: form.alarm_code,
       alarm_description: form.alarm_description,
       cause: form.cause,
+      occurred_at: form.occurred_at,
     });
     if (validationError) {
       setError(validationError);
@@ -186,16 +225,34 @@ export default function AlarmsPage() {
           setError(updateError.message);
           return;
         }
+        await writeAuditLog({
+          profile,
+          action: "update",
+          entityType: "alarm",
+          entityId: editingId,
+          summary: `อัปเดต Alarm ${payload.alarm_code}`,
+        });
         message.success("อัปเดต Alarm แล้ว");
       } else {
-        const { error: insertError } = await supabase.from("alarms").insert({
-          ...payload,
-          created_by: profile?.id || null,
-        });
+        const { data, error: insertError } = await supabase
+          .from("alarms")
+          .insert({
+            ...payload,
+            created_by: profile?.id || null,
+          })
+          .select("id")
+          .single();
         if (insertError) {
           setError(insertError.message);
           return;
         }
+        await writeAuditLog({
+          profile,
+          action: "create",
+          entityType: "alarm",
+          entityId: data?.id,
+          summary: `สร้าง Alarm ${payload.alarm_code}`,
+        });
         message.success("บันทึก Alarm แล้ว");
       }
 
@@ -209,6 +266,7 @@ export default function AlarmsPage() {
   }
 
   async function startRepair(alarm: Alarm) {
+    if (!canEdit) return;
     try {
       await createMaintenanceFromAlarm({
         alarmId: alarm.id,
@@ -216,6 +274,13 @@ export default function AlarmsPage() {
         alarmCode: alarm.alarm_code,
         alarmDescription: alarm.alarm_description,
         technicianId: profile?.id || null,
+      });
+      await writeAuditLog({
+        profile,
+        action: "workflow",
+        entityType: "alarm",
+        entityId: alarm.id,
+        summary: `เปิดงานซ่อมจาก Alarm ${alarm.alarm_code}`,
       });
       message.success("เปิดงานซ่อมแล้ว และอัปเดตสถานะ Alarm/เครื่องจักร");
       await load();
@@ -227,11 +292,19 @@ export default function AlarmsPage() {
   }
 
   async function resolveAlarm(alarm: Alarm) {
+    if (!canEdit) return;
     try {
       const next = await markAlarmResolved({
         alarmId: alarm.id,
         machineUuid: alarm.machine_uuid,
         closeOpenMaintenance: true,
+      });
+      await writeAuditLog({
+        profile,
+        action: "workflow",
+        entityType: "alarm",
+        entityId: alarm.id,
+        summary: `ปิด Alarm ${alarm.alarm_code}`,
       });
       message.success(
         next === "Running"
@@ -283,43 +356,46 @@ export default function AlarmsPage() {
       title: "จัดการ",
       key: "actions",
       width: 280,
-      render: (_: unknown, alarm: Alarm) => (
-        <Space wrap size={0}>
-          <Button
-            type="link"
-            icon={<EditOutlined />}
-            onClick={() => openEdit(alarm)}
-          >
-            แก้ไข
-          </Button>
-          {alarm.status !== "Closed" && (
-            <>
-              <Popconfirm
-                title="เปิดงานซ่อมจาก Alarm นี้?"
-                description="ระบบจะสร้างงานบำรุงรักษา และตั้งเครื่องเป็นซ่อมบำรุง"
-                okText="เปิดงานซ่อม"
-                cancelText="ยกเลิก"
-                onConfirm={() => startRepair(alarm)}
-              >
-                <Button type="link" icon={<ToolOutlined />}>
-                  เปิดงานซ่อม
-                </Button>
-              </Popconfirm>
-              <Popconfirm
-                title="ปิด Alarm และทำให้เครื่องกลับปกติ?"
-                description="จะปิด Alarm และปิดงานซ่อมที่ค้างของเครื่องนี้"
-                okText="ปิดและกลับปกติ"
-                cancelText="ยกเลิก"
-                onConfirm={() => resolveAlarm(alarm)}
-              >
-                <Button type="link" icon={<CheckCircleOutlined />}>
-                  ปิด/กลับปกติ
-                </Button>
-              </Popconfirm>
-            </>
-          )}
-        </Space>
-      ),
+      render: (_: unknown, alarm: Alarm) =>
+        !canEdit ? (
+          <Tag>ดูอย่างเดียว</Tag>
+        ) : (
+          <Space wrap size={0}>
+            <Button
+              type="link"
+              icon={<EditOutlined />}
+              onClick={() => openEdit(alarm)}
+            >
+              แก้ไข
+            </Button>
+            {alarm.status !== "Closed" && (
+              <>
+                <Popconfirm
+                  title="เปิดงานซ่อมจาก Alarm นี้?"
+                  description="ระบบจะสร้างงานบำรุงรักษา และตั้งเครื่องเป็นซ่อมบำรุง"
+                  okText="เปิดงานซ่อม"
+                  cancelText="ยกเลิก"
+                  onConfirm={() => startRepair(alarm)}
+                >
+                  <Button type="link" icon={<ToolOutlined />}>
+                    เปิดงานซ่อม
+                  </Button>
+                </Popconfirm>
+                <Popconfirm
+                  title="ปิด Alarm และทำให้เครื่องกลับปกติ?"
+                  description="จะปิด Alarm และปิดงานซ่อมที่ค้างของเครื่องนี้"
+                  okText="ปิดและกลับปกติ"
+                  cancelText="ยกเลิก"
+                  onConfirm={() => resolveAlarm(alarm)}
+                >
+                  <Button type="link" icon={<CheckCircleOutlined />}>
+                    ปิด/กลับปกติ
+                  </Button>
+                </Popconfirm>
+              </>
+            )}
+          </Space>
+        ),
     },
   ];
 
@@ -329,11 +405,13 @@ export default function AlarmsPage() {
         <PageIntro
           eyebrow="Alarm Record"
           title="บันทึก Alarm"
-          description="ขั้นที่ 1: แจ้งปัญหา → กด 'เปิดงานซ่อม' เพื่อสร้างงานบำรุงรักษา → ซ่อมเสร็จแล้วกด 'ปิด/กลับปกติ' ให้เครื่องกลับมาทำงาน"
+          description="ขั้นที่ 1: แจ้งปัญหา → กด 'เปิดงานซ่อม' เพื่อสร้างงานบำรุงรักษา → ซ่อมเสร็จแล้วกด 'ปิด/กลับปกติ'"
         />
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          เพิ่ม Alarm
-        </Button>
+        {canEdit && (
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+            เพิ่ม Alarm
+          </Button>
+        )}
       </div>
 
       {error && !modalOpen && (
@@ -345,28 +423,24 @@ export default function AlarmsPage() {
           onClose={() => setError(null)}
         />
       )}
+      {filterError && (
+        <Alert type="warning" showIcon message={filterError} />
+      )}
 
-      <Card size="small" className="ui-card">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Input
-            allowClear
-            prefix={<SearchOutlined />}
-            placeholder="ค้นหาเครื่องหรือรหัส Alarm"
-            value={filterMachine}
-            onChange={(e) => setFilterMachine(e.target.value)}
-          />
-          <Select
-            allowClear
-            placeholder="กรองสถานะ"
-            value={filterStatus || undefined}
-            onChange={(v) => setFilterStatus(v || "")}
-            options={ALARM_STATUSES.map((status) => ({
-              value: status,
-              label: WORK_STATUS_LABELS[status],
-            }))}
-          />
-        </div>
-      </Card>
+      <AdvancedFilterBar
+        value={filters}
+        onChange={setFilters}
+        keywordPlaceholder="ค้นหารหัส / รายละเอียด / เครื่อง"
+        statusOptions={ALARM_STATUSES.map((status) => ({
+          value: status,
+          label: WORK_STATUS_LABELS[status],
+        }))}
+        machineOptions={machines.map((m) => ({
+          value: m.id,
+          label: `${m.machine_id} — ${m.machine_name}`,
+        }))}
+        onExport={onExport}
+      />
 
       <Card className="ui-card" title={`รายการ Alarm (${filtered.length})`}>
         <Table

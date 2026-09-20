@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/client";
-import type { AlarmStatus, MachineStatus } from "@/lib/types";
+import type { AlarmStatus, MachineStatus, MaintenanceStatus } from "@/lib/types";
+import { OPEN_MAINTENANCE_STATUSES } from "@/lib/types";
 
 async function resolveMachineStatus(machineUuid: string) {
   const supabase = createClient();
@@ -14,7 +15,7 @@ async function resolveMachineStatus(machineUuid: string) {
     .from("maintenance_records")
     .select("id", { count: "exact", head: true })
     .eq("machine_uuid", machineUuid)
-    .neq("status", "Closed");
+    .in("status", OPEN_MAINTENANCE_STATUSES);
 
   let next: MachineStatus = "Running";
   if ((alarmCount || 0) > 0) next = "Alarm";
@@ -53,11 +54,14 @@ export async function syncMachineAfterAlarmChange(
 
 export async function syncMachineAfterMaintenanceChange(
   machineUuid: string,
-  maintenanceStatus: string,
+  maintenanceStatus: MaintenanceStatus | string,
 ) {
   const supabase = createClient();
+  const open = OPEN_MAINTENANCE_STATUSES.includes(
+    maintenanceStatus as MaintenanceStatus,
+  );
 
-  if (maintenanceStatus === "Open" || maintenanceStatus === "In Progress") {
+  if (open) {
     await supabase
       .from("machines")
       .update({
@@ -139,7 +143,7 @@ export async function markAlarmResolved(input: {
         updated_at: new Date().toISOString(),
       })
       .eq("machine_uuid", input.machineUuid)
-      .neq("status", "Closed");
+      .in("status", OPEN_MAINTENANCE_STATUSES);
   }
 
   return resolveMachineStatus(input.machineUuid);

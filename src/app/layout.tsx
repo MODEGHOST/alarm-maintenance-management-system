@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Geist_Mono, Manrope, Fraunces } from "next/font/google";
-import { AntdProvider } from "@/components/AntdProvider";
+import { ThemeProvider } from "@/components/ThemeProvider";
 import "./globals.css";
 
 const body = Manrope({
@@ -29,9 +29,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html
       lang="th"
       className={`${body.variable} ${display.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col">
-        <AntdProvider>{children}</AntdProvider>
+        <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>
   );

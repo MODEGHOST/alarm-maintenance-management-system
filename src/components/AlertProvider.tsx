@@ -10,6 +10,7 @@ import {
 } from "react";
 import { notification } from "antd";
 import { createClient } from "@/lib/supabase/client";
+import { OPEN_MAINTENANCE_STATUSES } from "@/lib/types";
 
 type AlertCounts = {
   openAlarms: number;
@@ -41,7 +42,7 @@ export function AlertProvider({ children }: { children: React.ReactNode }) {
       supabase
         .from("maintenance_records")
         .select("id", { count: "exact", head: true })
-        .neq("status", "Closed"),
+        .in("status", OPEN_MAINTENANCE_STATUSES),
       supabase
         .from("machines")
         .select("id", { count: "exact", head: true })

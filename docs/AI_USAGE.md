@@ -8,22 +8,23 @@
 ## สิ่งที่ AI ช่วย
 
 1. วิเคราะห์ requirement จากไฟล์ PDF
-2. ออกแบบ Database Schema และ RLS ตาม Role
+2. ออกแบบ Database Schema และ RLS ตาม Role (Admin / Technician / Viewer)
 3. พัฒนา Next.js + Ant Design UI (Login/Register, Sidebar, Dashboard, Modal CRUD)
-4. Authentication + Role-Based Access (Admin / Technician)
-5. Validation (ห้ามว่าง, Machine ID ไม่ซ้ำ, รูปแบบ/ความยาว, ข้อความแจ้งเตือน)
-6. Workflow Alarm → เปิดงานซ่อม → ปิดกลับปกติ
+4. Authentication + Role-Based Access
+5. Validation (ว่าง, ไม่ซ้ำ, รูปแบบ, ความยาว, วันที่, เบอร์โทร, XSS-ish)
+6. Workflow Alarm → เปิดงานซ่อม → Waiting Part → ปิดกลับปกติ
 7. Notification (Badge + แถบแจ้งเตือน)
-8. GitHub Actions CI และ README
+8. โบนัส: กราฟ Alarm, Machine History, Filter ขั้นสูง + ช่วงวันที่, Export CSV/Excel, Audit Log, Dark Mode / Responsive, ข้อมูล Technician
+9. GitHub Actions CI และ README
 
 ## สิ่งที่ผู้เรียนตรวจเอง
 
-- ความถูกต้องของ CRUD และสิทธิ์ Role
+- รัน `supabase/schema.sql` หรือ `bonus_migration.sql` ให้ครบ
+- ความถูกต้องของ CRUD และสิทธิ์ Role (โดยเฉพาะ Viewer)
 - ไม่ commit secret / Service Role Key
-- ทดสอบ Login ทั้ง Admin และ Technician
+- ทดสอบ Login ทั้ง Admin / Technician / Viewer
 - Deploy Vercel และแนบ Screenshot ตอนส่งงาน
 
 ## หมายเหตุ
 
-ระบบหลักครบตาม requirement 100 คะแนน  
-Bonus ไม่ได้ทำครบทุกข้อ แต่มีฟีเจอร์เสริมบางส่วน เช่น Register, Notification, Sidebar, Workflow เชื่อม Alarm-Maintenance
+ระบบหลักครบตาม requirement และเพิ่มฟีเจอร์โบนัสตามรายการใน README

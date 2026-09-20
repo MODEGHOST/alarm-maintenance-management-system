@@ -1,14 +1,22 @@
-export type UserRole = "admin" | "technician";
+export type UserRole = "admin" | "technician" | "viewer";
 
 export type MachineStatus = "Running" | "Stop" | "Alarm" | "Maintenance";
 export type AlarmStatus = "Open" | "In Progress" | "Closed";
-export type MaintenanceStatus = "Open" | "In Progress" | "Closed";
+export type MaintenanceStatus =
+  | "Open"
+  | "In Progress"
+  | "Waiting Part"
+  | "Closed";
 
 export type Profile = {
   id: string;
   email: string | null;
   full_name: string | null;
   role: UserRole;
+  phone?: string | null;
+  employee_code?: string | null;
+  specialty?: string | null;
+  shift?: string | null;
   created_at: string;
 };
 
@@ -49,7 +57,31 @@ export type MaintenanceRecord = {
   created_at: string;
   updated_at: string;
   machines?: Pick<Machine, "machine_id" | "machine_name"> | null;
-  profiles?: Pick<Profile, "full_name" | "email"> | null;
+  profiles?: Pick<
+    Profile,
+    "full_name" | "email" | "phone" | "employee_code" | "specialty"
+  > | null;
+};
+
+export type AuditLog = {
+  id: string;
+  actor_id: string | null;
+  actor_email: string | null;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  summary: string;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+};
+
+export type MachineHistoryItem = {
+  id: string;
+  kind: "alarm" | "maintenance";
+  title: string;
+  detail: string;
+  status: string;
+  at: string;
 };
 
 export const MACHINE_STATUSES: MachineStatus[] = [
@@ -64,5 +96,14 @@ export const ALARM_STATUSES: AlarmStatus[] = ["Open", "In Progress", "Closed"];
 export const MAINTENANCE_STATUSES: MaintenanceStatus[] = [
   "Open",
   "In Progress",
+  "Waiting Part",
   "Closed",
+];
+
+export const USER_ROLES: UserRole[] = ["admin", "technician", "viewer"];
+
+export const OPEN_MAINTENANCE_STATUSES: MaintenanceStatus[] = [
+  "Open",
+  "In Progress",
+  "Waiting Part",
 ];

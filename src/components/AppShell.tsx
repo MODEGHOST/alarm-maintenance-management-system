@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Alert, Button } from "antd";
+import { Alert, Button, Tag } from "antd";
 import { MenuFoldOutlined, MenuUnfoldOutlined } from "@ant-design/icons";
 import { logout } from "@/app/actions/auth";
 import { AlertProvider, useAlertCounts } from "@/components/AlertProvider";
 import { NavLinks } from "@/components/NavLinks";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { roleLabel } from "@/lib/labels";
 import type { Profile } from "@/lib/types";
 
@@ -75,10 +76,16 @@ function AppShellInner({
             </p>
           </div>
           <div className="app-user app-user-desktop">
+            <ThemeToggle />
             <div className="app-user-meta">
               <strong>{profile.full_name || profile.email}</strong>
-              <span>{roleLabel(profile.role)}</span>
+              <span>
+                <Tag style={{ marginInlineEnd: 0 }}>{roleLabel(profile.role)}</Tag>
+              </span>
             </div>
+          </div>
+          <div className="app-user-mobile-actions">
+            <ThemeToggle />
           </div>
         </header>
 
@@ -128,7 +135,8 @@ export function ProfileMissingPanel({ email }: { email?: string | null }) {
         <p className="mt-2 text-sm text-slate-600">
           เข้าสู่ระบบด้วย {email || "ไม่ทราบอีเมล"} แต่ยังไม่มีข้อมูลในตาราง{" "}
           <code>profiles</code> กรุณารัน <code>supabase/schema.sql</code>{" "}
-          แล้วตั้งค่า role เป็น <code>admin</code> หรือ <code>technician</code>
+          แล้วตั้งค่า role เป็น <code>admin</code>, <code>technician</code> หรือ{" "}
+          <code>viewer</code>
         </p>
         <form action={logout} className="mt-4">
           <Button type="primary" htmlType="submit">

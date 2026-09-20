@@ -1,12 +1,37 @@
 @import "tailwindcss";
 
-:root {
+:root,
+[data-theme="light"] {
   --background: #eef2f6;
   --foreground: #0f172a;
+  --surface: #ffffff;
+  --surface-muted: #f8fafc;
+  --border: #dbe4ee;
+  --muted: #64748b;
+  --chart-bar: #0c4a6e;
   --auth-ink: #07111f;
   --auth-panel: #f8fafc;
   --auth-accent: #ea580c;
   --auth-line: rgba(255, 255, 255, 0.12);
+  --app-bg:
+    radial-gradient(circle at top right, rgba(14, 116, 144, 0.08), transparent 28%),
+    linear-gradient(180deg, #e8eef5 0%, #f4f7fb 40%, #eef2f6 100%);
+  --topbar-bg: rgba(255, 255, 255, 0.9);
+}
+
+[data-theme="dark"] {
+  --background: #0b1220;
+  --foreground: #e2e8f0;
+  --surface: #111827;
+  --surface-muted: #0f172a;
+  --border: #1f2a3a;
+  --muted: #94a3b8;
+  --chart-bar: #38bdf8;
+  --auth-panel: #0f172a;
+  --app-bg:
+    radial-gradient(circle at top right, rgba(56, 189, 248, 0.08), transparent 28%),
+    linear-gradient(180deg, #070d18 0%, #0b1220 45%, #0f172a 100%);
+  --topbar-bg: rgba(15, 23, 42, 0.92);
 }
 
 @theme inline {
@@ -248,10 +273,8 @@ button {
   min-height: 100vh;
   display: grid;
   grid-template-columns: 260px 1fr;
-  background:
-    radial-gradient(circle at top right, rgba(14, 116, 144, 0.08), transparent 28%),
-    linear-gradient(180deg, #e8eef5 0%, #f4f7fb 40%, #eef2f6 100%);
-  color: #0f172a;
+  background: var(--app-bg);
+  color: var(--foreground);
 }
 
 .app-sidebar {
@@ -401,9 +424,9 @@ button {
   align-items: flex-start;
   gap: 14px;
   padding: 16px 20px;
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--topbar-bg);
   backdrop-filter: blur(10px);
-  border-bottom: 1px solid #d7e0ea;
+  border-bottom: 1px solid var(--border);
 }
 
 .sidebar-toggle {
@@ -455,9 +478,14 @@ button {
 .app-purpose {
   margin: 6px 0 0;
   max-width: 56ch;
-  color: #64748b;
+  color: var(--muted);
   font-size: 13px;
   line-height: 1.5;
+}
+
+.app-user-mobile-actions {
+  display: none;
+  margin-left: auto;
 }
 
 .app-user {
@@ -527,6 +555,10 @@ button {
 
   .app-user-desktop {
     display: none;
+  }
+
+  .app-user-mobile-actions {
+    display: block;
   }
 }
 
@@ -633,8 +665,8 @@ button {
 
 .dash-section,
 .dash-actions {
-  background: #fff;
-  border: 1px solid #dbe4ee;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 16px;
   padding: 18px;
 }
@@ -727,8 +759,8 @@ button {
 }
 
 .attention-panel {
-  background: #fff;
-  border: 1px solid #dbe4ee;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 16px;
   padding: 16px;
   display: grid;
@@ -880,9 +912,9 @@ button {
   min-height: 180px;
   display: grid;
   place-items: center;
-  background: #fff;
+  background: var(--surface);
   border-radius: 16px;
-  border: 1px solid #dbe4ee;
+  border: 1px solid var(--border);
 }
 
 @media (max-width: 980px) {
@@ -909,18 +941,219 @@ button {
 
 .ui-card {
   border-radius: 16px !important;
-  border-color: #dbe4ee !important;
+  border-color: var(--border) !important;
+  background: var(--surface) !important;
   box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
 }
 
 .ui-card .ant-card-head {
-  border-bottom-color: #e8eef5;
+  border-bottom-color: var(--border);
   min-height: 48px;
 }
 
 .ui-card .ant-form-item-label > label {
   font-weight: 600;
-  color: #334155;
+  color: var(--foreground);
+}
+
+.dash-section,
+.dash-actions,
+.attention-panel,
+.dash-loading {
+  background: var(--surface);
+  border-color: var(--border);
+}
+
+.page-intro p {
+  color: var(--muted);
+}
+
+.filter-card .filter-bar {
+  display: grid;
+  gap: 10px;
+}
+
+.filter-bar-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.dash-charts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.chart-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 16px;
+}
+
+.chart-panel h4 {
+  margin: 0 0 12px;
+  font-size: 0.95rem;
+}
+
+.chart-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.bar-chart {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 8px;
+  align-items: end;
+}
+
+.bar-col {
+  display: grid;
+  grid-template-rows: 1fr auto auto;
+  gap: 4px;
+  height: 100%;
+  text-align: center;
+}
+
+.bar-track {
+  display: flex;
+  align-items: flex-end;
+  height: 100%;
+  min-height: 80px;
+  border-radius: 8px;
+  background: var(--surface-muted);
+  overflow: hidden;
+}
+
+.bar-fill {
+  width: 100%;
+  border-radius: 8px 8px 0 0;
+  min-height: 4px;
+  transition: height 0.35s ease;
+}
+
+.bar-col strong {
+  font-size: 12px;
+}
+
+.bar-col span {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.2;
+  word-break: break-word;
+}
+
+.donut-wrap {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+
+.donut {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.donut-hole {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--surface);
+  display: grid;
+  place-content: center;
+  text-align: center;
+}
+
+.donut-hole strong {
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.donut-hole span {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.donut-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.donut-legend li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.donut-legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.history-grid {
+  display: grid;
+  grid-template-columns: 0.9fr 1.1fr;
+  gap: 14px;
+}
+
+.history-meta {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.history-detail {
+  margin: 4px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+@media (max-width: 980px) {
+  .dash-charts,
+  .history-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+[data-theme="dark"] .dash-section,
+[data-theme="dark"] .attention-panel,
+[data-theme="dark"] .dash-loading,
+[data-theme="dark"] .metric,
+[data-theme="dark"] .attention-list li {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--foreground);
+}
+
+[data-theme="dark"] .attention-alarm {
+  background: linear-gradient(180deg, rgba(127, 29, 29, 0.25), var(--surface));
+}
+
+[data-theme="dark"] .attention-maint {
+  background: linear-gradient(180deg, rgba(154, 52, 18, 0.2), var(--surface));
+}
+
+[data-theme="dark"] .sidebar-toggle {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--foreground);
 }
 
 

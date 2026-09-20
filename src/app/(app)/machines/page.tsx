@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
@@ -18,10 +19,18 @@ import {
 import {
   DeleteOutlined,
   EditOutlined,
+  HistoryOutlined,
   PlusOutlined,
-  SearchOutlined,
 } from "@ant-design/icons";
+import { AdvancedFilterBar } from "@/components/AdvancedFilterBar";
 import { PageIntro } from "@/components/PageIntro";
+import { writeAuditLog } from "@/lib/audit";
+import { exportExcelCsv } from "@/lib/export";
+import {
+  emptyAdvancedFilter,
+  matchesKeyword,
+  type AdvancedFilterState,
+} from "@/lib/filters";
 import { MACHINE_STATUS_LABELS } from "@/lib/labels";
 import { canManageMachines } from "@/lib/rbac";
 import { createClient } from "@/lib/supabase/client";
@@ -50,8 +59,8 @@ export default function MachinesPage() {
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
-  const [filterMachine, setFilterMachine] = useState("");
-  const [filterStatus, setFilterStatus] = useState("");
+  const [filters, setFilters] =
+    useState<AdvancedFilterState>(emptyAdvancedFilter);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -92,16 +101,38 @@ export default function MachinesPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  const typeOptions = useMemo(
+    () =>
+      [...new Set(machines.map((m) => m.machine_type))].map((t) => ({
+        value: t,
+        label: t,
+      })),
+    [machines],
+  );
+
+  const locationOptions = useMemo(
+    () =>
+      [...new Set(machines.map((m) => m.location))].map((l) => ({
+        value: l,
+        label: l,
+      })),
+    [machines],
+  );
+
   const filtered = useMemo(() => {
     return machines.filter((m) => {
-      const matchMachine =
-        !filterMachine ||
-        m.machine_id.toLowerCase().includes(filterMachine.toLowerCase()) ||
-        m.machine_name.toLowerCase().includes(filterMachine.toLowerCase());
-      const matchStatus = !filterStatus || m.status === filterStatus;
-      return matchMachine && matchStatus;
+      return (
+        matchesKeyword(
+          `${m.machine_id} ${m.machine_name} ${m.machine_type} ${m.location}`,
+          filters.keyword,
+        ) &&
+        (!filters.status || m.status === filters.status) &&
+        (!filters.type || m.machine_type === filters.type) &&
+        (!filters.location || m.location === filters.location) &&
+        (!filters.machineId || m.id === filters.machineId)
+      );
     });
-  }, [machines, filterMachine, filterStatus]);
+  }, [machines, filters]);
 
   function openCreate() {
     setEditingId(null);
@@ -129,6 +160,21 @@ export default function MachinesPage() {
     setForm(emptyForm);
   }
 
+  function onExport() {
+    exportExcelCsv(
+      `machines-${new Date().toISOString().slice(0, 10)}`,
+      ["รหัส", "ชื่อ", "ประเภท", "ตำแหน่ง", "สถานะ"],
+      filtered.map((m) => [
+        m.machine_id,
+        m.machine_name,
+        m.machine_type,
+        m.location,
+        MACHINE_STATUS_LABELS[m.status],
+      ]),
+    );
+    message.success("ส่งออก CSV/Excel แล้ว");
+  }
+
   async function onSubmit() {
     setError(null);
 
@@ -143,7 +189,6 @@ export default function MachinesPage() {
       return;
     }
 
-    // ตรวจซ้ำฝั่ง UI ก่อนส่ง (DB ยังมี unique constraint อีกชั้น)
     const duplicate = machines.some(
       (m) =>
         m.machine_id.toLowerCase() === form.machine_id.trim().toLowerCase() &&
@@ -179,11 +224,20 @@ export default function MachinesPage() {
           );
           return;
         }
+        await writeAuditLog({
+          profile,
+          action: "update",
+          entityType: "machine",
+          entityId: editingId,
+          summary: `อัปเดตเครื่อง ${payload.machine_id}`,
+        });
         message.success("อัปเดตเครื่องจักรแล้ว");
       } else {
-        const { error: insertError } = await supabase
+        const { data, error: insertError } = await supabase
           .from("machines")
-          .insert(payload);
+          .insert(payload)
+          .select("id")
+          .single();
         if (insertError) {
           setError(
             insertError.message.includes("duplicate")
@@ -192,6 +246,13 @@ export default function MachinesPage() {
           );
           return;
         }
+        await writeAuditLog({
+          profile,
+          action: "create",
+          entityType: "machine",
+          entityId: data?.id,
+          summary: `เพิ่มเครื่อง ${payload.machine_id}`,
+        });
         message.success("เพิ่มเครื่องจักรแล้ว");
       }
 
@@ -204,6 +265,7 @@ export default function MachinesPage() {
 
   async function onDelete(id: string) {
     if (!isAdmin) return;
+    const machine = machines.find((m) => m.id === id);
     const supabase = createClient();
     const { error: deleteError } = await supabase
       .from("machines")
@@ -215,6 +277,13 @@ export default function MachinesPage() {
       return;
     }
 
+    await writeAuditLog({
+      profile,
+      action: "delete",
+      entityType: "machine",
+      entityId: id,
+      summary: `ลบเครื่อง ${machine?.machine_id || id}`,
+    });
     message.success("ลบเครื่องจักรแล้ว");
     if (editingId === id) closeModal();
     await load();
@@ -238,37 +307,42 @@ export default function MachinesPage() {
         <Tag color={statusColor[status]}>{MACHINE_STATUS_LABELS[status]}</Tag>
       ),
     },
-    ...(isAdmin
-      ? [
-          {
-            title: "จัดการ",
-            key: "actions",
-            render: (_: unknown, machine: Machine) => (
-              <Space>
-                <Button
-                  type="link"
-                  icon={<EditOutlined />}
-                  onClick={() => openEdit(machine)}
-                >
-                  แก้ไข
+    {
+      title: "จัดการ",
+      key: "actions",
+      render: (_: unknown, machine: Machine) => (
+        <Space wrap>
+          <Link href={`/history?machine=${machine.id}`}>
+            <Button type="link" icon={<HistoryOutlined />}>
+              ประวัติ
+            </Button>
+          </Link>
+          {isAdmin && (
+            <>
+              <Button
+                type="link"
+                icon={<EditOutlined />}
+                onClick={() => openEdit(machine)}
+              >
+                แก้ไข
+              </Button>
+              <Popconfirm
+                title="ลบเครื่องจักรนี้?"
+                description="ข้อมูล Alarm/งานที่ผูกกับเครื่องนี้อาจถูกลบตาม"
+                okText="ลบ"
+                cancelText="ยกเลิก"
+                okButtonProps={{ danger: true }}
+                onConfirm={() => onDelete(machine.id)}
+              >
+                <Button type="link" danger icon={<DeleteOutlined />}>
+                  ลบ
                 </Button>
-                <Popconfirm
-                  title="ลบเครื่องจักรนี้?"
-                  description="ข้อมูล Alarm/งานที่ผูกกับเครื่องนี้อาจถูกลบตาม"
-                  okText="ลบ"
-                  cancelText="ยกเลิก"
-                  okButtonProps={{ danger: true }}
-                  onConfirm={() => onDelete(machine.id)}
-                >
-                  <Button type="link" danger icon={<DeleteOutlined />}>
-                    ลบ
-                  </Button>
-                </Popconfirm>
-              </Space>
-            ),
-          },
-        ]
-      : []),
+              </Popconfirm>
+            </>
+          )}
+        </Space>
+      ),
+    },
   ];
 
   return (
@@ -280,7 +354,7 @@ export default function MachinesPage() {
           description={
             isAdmin
               ? "เพิ่ม ดู แก้ไข และลบเครื่องในโรงงาน — เป็นฐานข้อมูลหลักก่อนบันทึก Alarm หรืองานซ่อม"
-              : "ดูรายการเครื่องจักรและสถานะปัจจุบัน (ช่างเทคนิคดูได้อย่างเดียว)"
+              : "ดูรายการเครื่องจักรและสถานะปัจจุบัน (Technician/Viewer ดูได้อย่างเดียว)"
           }
         />
         {isAdmin && (
@@ -300,27 +374,24 @@ export default function MachinesPage() {
         />
       )}
 
-      <Card size="small" className="ui-card">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Input
-            allowClear
-            prefix={<SearchOutlined />}
-            placeholder="ค้นหารหัสหรือชื่อเครื่อง"
-            value={filterMachine}
-            onChange={(e) => setFilterMachine(e.target.value)}
-          />
-          <Select
-            allowClear
-            placeholder="กรองสถานะ"
-            value={filterStatus || undefined}
-            onChange={(v) => setFilterStatus(v || "")}
-            options={MACHINE_STATUSES.map((status) => ({
-              value: status,
-              label: MACHINE_STATUS_LABELS[status],
-            }))}
-          />
-        </div>
-      </Card>
+      <AdvancedFilterBar
+        value={filters}
+        onChange={setFilters}
+        keywordPlaceholder="ค้นหารหัสหรือชื่อเครื่อง"
+        statusOptions={MACHINE_STATUSES.map((status) => ({
+          value: status,
+          label: MACHINE_STATUS_LABELS[status],
+        }))}
+        machineOptions={machines.map((m) => ({
+          value: m.id,
+          label: `${m.machine_id} — ${m.machine_name}`,
+        }))}
+        showType
+        showLocation
+        typeOptions={typeOptions}
+        locationOptions={locationOptions}
+        onExport={onExport}
+      />
 
       <Card
         className="ui-card"

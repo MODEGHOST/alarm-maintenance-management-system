@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, Button, Empty, Spin, Table, Tag } from "antd";
 import {
   AlertOutlined,
@@ -11,9 +11,11 @@ import {
   ToolOutlined,
   WarningOutlined,
 } from "@ant-design/icons";
+import { BarChart, DonutStat } from "@/components/Charts";
 import { createClient } from "@/lib/supabase/client";
 import { MACHINE_STATUS_LABELS, WORK_STATUS_LABELS } from "@/lib/labels";
 import type { Alarm, Machine, MachineStatus, MaintenanceRecord } from "@/lib/types";
+import { OPEN_MAINTENANCE_STATUSES } from "@/lib/types";
 
 type Stats = {
   totalMachines: number;
@@ -35,6 +37,7 @@ export default function DashboardPage() {
   const [maintMachines, setMaintMachines] = useState<Machine[]>([]);
   const [openAlarmRows, setOpenAlarmRows] = useState<Alarm[]>([]);
   const [openMaintRows, setOpenMaintRows] = useState<MaintenanceRecord[]>([]);
+  const [allAlarms, setAllAlarms] = useState<Alarm[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -42,25 +45,32 @@ export default function DashboardPage() {
     async function load() {
       try {
         const supabase = createClient();
-        const [machinesRes, alarmsRes, maintenanceRes] = await Promise.all([
-          supabase.from("machines").select("*").order("machine_id"),
-          supabase
-            .from("alarms")
-            .select("*, machines(machine_id, machine_name)")
-            .neq("status", "Closed")
-            .order("occurred_at", { ascending: false }),
-          supabase
-            .from("maintenance_records")
-            .select(
-              "*, machines(machine_id, machine_name), profiles!technician_id(full_name, email)",
-            )
-            .neq("status", "Closed")
-            .order("created_at", { ascending: false }),
-        ]);
+        const [machinesRes, openAlarmsRes, maintenanceRes, allAlarmsRes] =
+          await Promise.all([
+            supabase.from("machines").select("*").order("machine_id"),
+            supabase
+              .from("alarms")
+              .select("*, machines(machine_id, machine_name)")
+              .neq("status", "Closed")
+              .order("occurred_at", { ascending: false }),
+            supabase
+              .from("maintenance_records")
+              .select(
+                "*, machines(machine_id, machine_name), profiles!technician_id(full_name, email)",
+              )
+              .in("status", OPEN_MAINTENANCE_STATUSES)
+              .order("created_at", { ascending: false }),
+            supabase
+              .from("alarms")
+              .select("*, machines(machine_id, machine_name)")
+              .order("occurred_at", { ascending: false })
+              .limit(500),
+          ]);
 
         if (machinesRes.error) throw machinesRes.error;
-        if (alarmsRes.error) throw alarmsRes.error;
+        if (openAlarmsRes.error) throw openAlarmsRes.error;
         if (maintenanceRes.error) throw maintenanceRes.error;
+        if (allAlarmsRes.error) throw allAlarmsRes.error;
 
         const machines = (machinesRes.data || []) as Machine[];
         const byStatus = { ...emptyStats.byStatus };
@@ -68,8 +78,9 @@ export default function DashboardPage() {
           if (row.status in byStatus) byStatus[row.status] += 1;
         }
 
-        const openAlarms = (alarmsRes.data || []) as Alarm[];
+        const openAlarms = (openAlarmsRes.data || []) as Alarm[];
         const openMaint = (maintenanceRes.data || []) as MaintenanceRecord[];
+        const alarms = (allAlarmsRes.data || []) as Alarm[];
 
         setStats({
           totalMachines: machines.length,
@@ -81,6 +92,7 @@ export default function DashboardPage() {
         setMaintMachines(machines.filter((m) => m.status === "Maintenance"));
         setOpenAlarmRows(openAlarms);
         setOpenMaintRows(openMaint);
+        setAllAlarms(alarms);
       } catch (err) {
         setError(
           err instanceof Error ? err.message : "โหลดแดชบอร์ดไม่สำเร็จ",
@@ -92,6 +104,57 @@ export default function DashboardPage() {
 
     load();
   }, []);
+
+  const alarmByDay = useMemo(() => {
+    const map = new Map<string, number>();
+    const now = new Date();
+    for (let i = 6; i >= 0; i -= 1) {
+      const d = new Date(now);
+      d.setDate(now.getDate() - i);
+      const key = d.toLocaleDateString("th-TH", {
+        day: "2-digit",
+        month: "short",
+      });
+      map.set(key, 0);
+    }
+    for (const alarm of allAlarms) {
+      const d = new Date(alarm.occurred_at);
+      const key = d.toLocaleDateString("th-TH", {
+        day: "2-digit",
+        month: "short",
+      });
+      if (map.has(key)) map.set(key, (map.get(key) || 0) + 1);
+    }
+    return [...map.entries()].map(([label, value]) => ({
+      label,
+      value,
+      color: "#0284c7",
+    }));
+  }, [allAlarms]);
+
+  const alarmByStatus = useMemo(() => {
+    const counts = { Open: 0, "In Progress": 0, Closed: 0 };
+    for (const a of allAlarms) {
+      if (a.status in counts) counts[a.status] += 1;
+    }
+    return [
+      { label: "เปิด", value: counts.Open, color: "#dc2626" },
+      { label: "กำลังทำ", value: counts["In Progress"], color: "#ea580c" },
+      { label: "ปิดแล้ว", value: counts.Closed, color: "#059669" },
+    ];
+  }, [allAlarms]);
+
+  const alarmByMachine = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const a of allAlarms) {
+      const label = a.machines?.machine_id || "ไม่ระบุ";
+      map.set(label, (map.get(label) || 0) + 1);
+    }
+    return [...map.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([label, value]) => ({ label, value, color: "#0c4a6e" }));
+  }, [allAlarms]);
 
   const runningPct =
     stats.totalMachines === 0
@@ -119,8 +182,7 @@ export default function DashboardPage() {
           <p className="dash-kicker">ศูนย์ควบคุมโรงงาน</p>
           <h2>เครื่องไหนมีปัญหา ดูได้ทันทีที่นี่</h2>
           <p>
-            ด้านล่างแสดงชื่อเครื่องที่ติด Alarm และเครื่องที่กำลังบำรุงรักษา
-            พร้อมรายการงานที่ยังไม่ปิด
+            แดชบอร์ดสรุปสถานะ พร้อมกราฟวิเคราะห์จำนวน Alarm และรายชื่อเครื่องที่ต้องดูแล
           </p>
         </div>
         <div className="dash-hero-status">
@@ -143,6 +205,12 @@ export default function DashboardPage() {
         </div>
       ) : (
         <>
+          <section className="dash-charts">
+            <BarChart title="จำนวน Alarm 7 วันล่าสุด" points={alarmByDay} />
+            <DonutStat title="สัดส่วนสถานะ Alarm" segments={alarmByStatus} />
+            <BarChart title="เครื่องที่ Alarm บ่อย" points={alarmByMachine} />
+          </section>
+
           <section className="dash-attention">
             <article className="attention-panel attention-alarm">
               <div className="attention-head">
@@ -219,7 +287,7 @@ export default function DashboardPage() {
 
           <section className="dash-section">
             <div className="dash-section-head">
-              <h3>รายการ Alarm ที่ยังเปิด (ระบุเครื่อง)</h3>
+              <h3>รายการ Alarm ที่ยังเปิด</h3>
               <Link href="/alarms">
                 <Button type="link">ดูทั้งหมด</Button>
               </Link>
@@ -264,7 +332,7 @@ export default function DashboardPage() {
 
           <section className="dash-section">
             <div className="dash-section-head">
-              <h3>งานบำรุงรักษาที่ยังเปิด (ระบุเครื่อง)</h3>
+              <h3>งานบำรุงรักษาที่ยังเปิด</h3>
               <Link href="/maintenance">
                 <Button type="link">ดูทั้งหมด</Button>
               </Link>
@@ -294,7 +362,15 @@ export default function DashboardPage() {
                   title: "สถานะ",
                   dataIndex: "status",
                   render: (s: MaintenanceRecord["status"]) => (
-                    <Tag color={s === "Open" ? "error" : "warning"}>
+                    <Tag
+                      color={
+                        s === "Open"
+                          ? "error"
+                          : s === "Waiting Part"
+                            ? "purple"
+                            : "warning"
+                      }
+                    >
                       {WORK_STATUS_LABELS[s]}
                     </Tag>
                   ),

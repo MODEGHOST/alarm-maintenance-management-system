@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Alert, Button, Form, Input, Typography } from "antd";
+import { Alert, Button, Form, Input, Select, Typography } from "antd";
 import {
   LockOutlined,
   MailOutlined,
@@ -11,12 +11,15 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { hasSupabaseConfig } from "@/lib/config";
+import { ROLE_LABELS } from "@/lib/labels";
+import type { UserRole } from "@/lib/types";
 
 type RegisterValues = {
   fullName: string;
   email: string;
   password: string;
   confirmPassword: string;
+  role: UserRole;
 };
 
 export default function RegisterPage() {
@@ -43,7 +46,7 @@ export default function RegisterPage() {
         options: {
           data: {
             full_name: values.fullName.trim(),
-            role: "technician",
+            role: values.role === "viewer" ? "viewer" : "technician",
           },
         },
       });
@@ -81,12 +84,12 @@ export default function RegisterPage() {
             ระบบควบคุม
           </h1>
           <p className="auth-lead">
-            สมัครแล้วได้สิทธิ์ Technician — Admin ตั้งค่าได้ทีหลังใน profiles
+            เลือก Role เป็น Technician หรือ Viewer — Admin ตั้งค่าทีหลังใน profiles ได้
           </p>
           <ul className="auth-points">
-            <li>ดูเครื่องจักร</li>
-            <li>บันทึก Alarm</li>
-            <li>อัปเดตงานบำรุงรักษา</li>
+            <li>Technician: จัดการ Alarm / งานซ่อม</li>
+            <li>Viewer: ดูอย่างเดียว</li>
+            <li>Admin: ตั้งค่าในฐานข้อมูล</li>
           </ul>
         </aside>
 
@@ -183,6 +186,26 @@ export default function RegisterPage() {
                 prefix={<LockOutlined />}
                 placeholder="Repeat password"
                 autoComplete="new-password"
+              />
+            </Form.Item>
+
+            <Form.Item
+              label="Role"
+              name="role"
+              initialValue="technician"
+              rules={[{ required: true, message: "กรุณาเลือก Role" }]}
+            >
+              <Select
+                options={[
+                  {
+                    value: "technician",
+                    label: ROLE_LABELS.technician,
+                  },
+                  {
+                    value: "viewer",
+                    label: ROLE_LABELS.viewer,
+                  },
+                ]}
               />
             </Form.Item>
 

@@ -5,9 +5,12 @@ import { usePathname } from "next/navigation";
 import { Badge } from "antd";
 import {
   AlertOutlined,
-  DashboardOutlined,
-  ToolOutlined,
+  AuditOutlined,
   ClusterOutlined,
+  DashboardOutlined,
+  HistoryOutlined,
+  TeamOutlined,
+  ToolOutlined,
 } from "@ant-design/icons";
 import { useAlertCounts } from "@/components/AlertProvider";
 
@@ -15,7 +18,7 @@ const nav = [
   {
     href: "/dashboard",
     label: "แดชบอร์ด",
-    hint: "ภาพรวมสถานะ",
+    hint: "ภาพรวม + กราฟ",
     icon: <DashboardOutlined />,
     badgeKey: null as null | "openAlarms" | "openMaintenance",
   },
@@ -24,6 +27,13 @@ const nav = [
     label: "เครื่องจักร",
     hint: "ทะเบียนเครื่อง",
     icon: <ClusterOutlined />,
+    badgeKey: null as null | "openAlarms" | "openMaintenance",
+  },
+  {
+    href: "/history",
+    label: "ประวัติเครื่อง",
+    hint: "Machine History",
+    icon: <HistoryOutlined />,
     badgeKey: null as null | "openAlarms" | "openMaintenance",
   },
   {
@@ -39,6 +49,20 @@ const nav = [
     hint: "งานซ่อม/PM",
     icon: <ToolOutlined />,
     badgeKey: "openMaintenance" as const,
+  },
+  {
+    href: "/technicians",
+    label: "ช่างเทคนิค",
+    hint: "ข้อมูล Technician",
+    icon: <TeamOutlined />,
+    badgeKey: null as null | "openAlarms" | "openMaintenance",
+  },
+  {
+    href: "/audit",
+    label: "Audit Log",
+    hint: "บันทึกการใช้งาน",
+    icon: <AuditOutlined />,
+    badgeKey: null as null | "openAlarms" | "openMaintenance",
   },
 ];
 

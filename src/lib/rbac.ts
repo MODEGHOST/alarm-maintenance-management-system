@@ -8,18 +8,36 @@ export function isTechnician(profile: Profile | null | undefined) {
   return profile?.role === "technician";
 }
 
+export function isViewer(profile: Profile | null | undefined) {
+  return profile?.role === "viewer";
+}
+
+export function isStaff(profile: Profile | null | undefined) {
+  return isAdmin(profile) || isTechnician(profile);
+}
+
 export function canManageMachines(profile: Profile | null | undefined) {
   return isAdmin(profile);
 }
 
-export function canManageAlarms(_profile: Profile | null | undefined) {
-  // Admin และ Technician จัดการ Alarm ได้ตามโจทย์
-  return Boolean(_profile);
+export function canManageAlarms(profile: Profile | null | undefined) {
+  return isStaff(profile);
 }
 
-export function canManageMaintenance(_profile: Profile | null | undefined) {
-  // Admin และ Technician จัดการงานบำรุงรักษาได้ตามโจทย์
-  return Boolean(_profile);
+export function canManageMaintenance(profile: Profile | null | undefined) {
+  return isStaff(profile);
+}
+
+export function canManageTechnicians(profile: Profile | null | undefined) {
+  return isAdmin(profile);
+}
+
+export function canExportData(profile: Profile | null | undefined) {
+  return Boolean(profile);
+}
+
+export function canViewAudit(profile: Profile | null | undefined) {
+  return isAdmin(profile) || isTechnician(profile);
 }
 
 export function assertRole(
