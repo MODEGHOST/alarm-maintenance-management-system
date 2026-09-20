@@ -21,6 +21,7 @@ import {
   EditOutlined,
   HistoryOutlined,
   PlusOutlined,
+  SyncOutlined,
 } from "@ant-design/icons";
 import { AdvancedFilterBar } from "@/components/AdvancedFilterBar";
 import { PageIntro } from "@/components/PageIntro";
@@ -37,7 +38,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { Machine, MachineStatus, Profile } from "@/lib/types";
 import { MACHINE_STATUSES } from "@/lib/types";
 import { validateMachineForm } from "@/lib/validations";
-import { resolveMachineStatus } from "@/lib/workflow";
+import { resolveMachineStatus, syncAllMachineStatuses } from "@/lib/workflow";
 
 const emptyForm = {
   machine_id: "",
@@ -65,6 +66,7 @@ export default function MachinesPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   const isAdmin = canManageMachines(profile);
 
@@ -267,6 +269,28 @@ export default function MachinesPage() {
     }
   }
 
+  async function onSyncAll() {
+    if (!isAdmin) return;
+    setSyncing(true);
+    try {
+      const result = await syncAllMachineStatuses();
+      await writeAuditLog({
+        profile,
+        action: "workflow",
+        entityType: "machine",
+        summary: `ซิงก์สถานะเครื่องทั้งหมด ${result.count} เครื่อง`,
+      });
+      message.success(`ซิงก์สถานะแล้ว ${result.count} เครื่อง`);
+      await load();
+    } catch (err) {
+      message.error(
+        err instanceof Error ? err.message : "ซิงก์สถานะไม่สำเร็จ",
+      );
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   async function onDelete(id: string) {
     if (!isAdmin) return;
     const machine = machines.find((m) => m.id === id);
@@ -362,9 +386,18 @@ export default function MachinesPage() {
           }
         />
         {isAdmin && (
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            เพิ่มเครื่องจักร
-          </Button>
+          <Space wrap>
+            <Button
+              icon={<SyncOutlined spin={syncing} />}
+              loading={syncing}
+              onClick={onSyncAll}
+            >
+              ซิงก์สถานะทั้งหมด
+            </Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+              เพิ่มเครื่องจักร
+            </Button>
+          </Space>
         )}
       </div>
 

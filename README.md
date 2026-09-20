@@ -21,11 +21,11 @@
 |--------|------------|
 | Authentication | Login / Logout / Register ด้วย Supabase Auth |
 | Role-Based Access | Admin / Technician / **Viewer** (UI + RLS) |
-| Machine Master | CRUD เครื่องจักร (Admin เท่านั้น) |
+| Machine Master | CRUD เครื่องจักร (Admin เท่านั้น) + ซิงก์สถานะทั้งหมด |
 | Alarm Record | Create / Read / Update + เปิดงานซ่อม / ปิดกลับปกติ |
 | Maintenance | Create / Read / Update + สถานะ **Waiting Part** + ปิดงานซ่อมเสร็จ |
 | Search / Filter | ตัวกรองขั้นสูง + กรองตามช่วงวันที่ |
-| Dashboard | สรุปสถานะ + **กราฟวิเคราะห์จำนวน Alarm** |
+| Dashboard | สรุปสถานะ + กราฟ Alarm + **คู่มือลำดับขั้น + งานถัดไป** |
 | Validation | ห้ามว่าง, ไม่ซ้ำ, รูปแบบ/ความยาว/วันที่, ข้อความเตือน |
 | Notification | Badge เมนู + แถบแจ้งเตือนเมื่อมี Alarm เปิด |
 
@@ -60,7 +60,8 @@
 - `maintenance_records` — งานบำรุงรักษา (รวม Waiting Part)
 - `audit_logs` — บันทึกการใช้งาน
 
-ถ้าเคยรัน schema เก่าแล้ว ให้รันเพิ่ม `supabase/bonus_migration.sql`
+ถ้าเคยรัน schema เก่าแล้ว ให้รันเพิ่ม `supabase/bonus_migration.sql`  
+ข้อมูล demo: `supabase/seed_demo.sql`
 
 ความสัมพันธ์:
 
@@ -86,8 +87,10 @@ npm install
 ### 2) ตั้งค่า Supabase
 
 1. สร้างโปรเจกต์ที่ [supabase.com](https://supabase.com)
-2. เปิด SQL Editor แล้วรันไฟล์ `supabase/schema.sql`
-   - ถ้ารัน schema เก่าไปแล้ว → รัน `supabase/bonus_migration.sql` เพิ่ม
+2. เปิด SQL Editor แล้วรันตามลำดับ:
+   - `supabase/schema.sql`
+   - ถ้ารัน schema เก่าไปแล้ว → `supabase/bonus_migration.sql`
+   - (แนะนำ) `supabase/seed_demo.sql` สำหรับข้อมูลสาธิต
 3. ปิด Confirm email ที่ Authentication → Providers → Email (เพื่อเทสง่าย)
 4. คัดลอก Project URL และ anon/publishable key
 
@@ -110,7 +113,7 @@ npm run dev
 
 เปิด [http://localhost:3000](http://localhost:3000)
 
-### บัญชีทดสอบ (ถ้ามีในโปรเจกต์ของคุณ)
+### บัญชีทดสอบ
 
 | Role | Email | Password |
 |------|--------|----------|
@@ -119,13 +122,34 @@ npm run dev
 
 หรือสมัครใหม่ที่หน้า Register (เลือก Technician หรือ Viewer) แล้วตั้ง `profiles.role = admin` ใน Supabase ถ้าต้องการ
 
-## Workflow การทำงาน
+## Workflow การทำงาน (ลำดับขั้นบังคับ)
 
-1. เกิดปัญหา → บันทึกที่เมนู **Alarm**
-2. กด **เปิดงานซ่อม** → สร้างงานใน **บำรุงรักษา** อัตโนมัติ
-3. ถ้าขาดอะไหล่ → ตั้งสถานะ **Waiting Part**
-4. ซ่อมเสร็จ → กด **ซ่อมเสร็จ** หรือ **ปิด/กลับปกติ**
-5. ระบบปิดงาน/Alarm และคืนสถานะเครื่องเป็น **กำลังทำงาน** เมื่อไม่มีงานค้าง
+1. เกิดปัญหา → บันทึกที่เมนู **Alarm** (สถานะ「เปิด」)
+2. กด **เปิดงานซ่อม** → สร้างงานใน **บำรุงรักษา** + เครื่องเป็น「ซ่อมบำรุง」
+3. ที่บำรุงรักษา: **เริ่มซ่อม** → (ถ้าขาดอะไหล่กด **รออะไหล่**) → **ซ่อมเสร็จ**
+4. ระบบปิดงาน/Alarm และคืนสถานะเครื่องเป็น **กำลังทำงาน** เมื่อไม่มีงานค้าง
+
+แดชบอร์ดจะบอก「งานถัดไปที่ต้องทำ」อัตโนมัติ
+
+## สคริปต์ทดสอบ 5 นาที (ก่อนส่งงาน)
+
+1. Login เป็น Admin → ดูแดชบอร์ดมีลำดับขั้น + งานถัดไป
+2. ไป **Alarm** → สร้าง Alarm ใหม่ (หรือใช้ `DEMO-CNC-02` จาก seed) → กด **เปิดงานซ่อม**
+3. ไป **บำรุงรักษา** → กด **เริ่มซ่อม** → กด **ซ่อมเสร็จ**
+4. ไป **เครื่องจักร** → สถานะเครื่องกลับ「กำลังทำงาน」(หรือกด **ซิงก์สถานะทั้งหมด**)
+5. Login เป็น Viewer → ตรวจว่าเพิ่ม/แก้ไข Alarm ไม่ได้
+6. ลอง Export CSV และดู **Audit Log** / **ประวัติเครื่อง**
+
+## เช็คลิสต์ส่งงาน
+
+- [ ] รัน `schema.sql` (+ `bonus_migration.sql` ถ้าจำเป็น) และ `seed_demo.sql`
+- [ ] ทดสอบครบ 3 Role: Admin / Technician / Viewer
+- [ ] ทดสอบ workflow จบวงจรตามสคริปต์ 5 นาที
+- [ ] `npm run lint` และ `npm run build` ผ่าน
+- [ ] GitHub Actions CI เขียว
+- [ ] Deploy Vercel แล้วใส่ URL ด้านล่าง
+- [ ] แคปหน้าจอ: Login, Dashboard, Alarm, Maintenance, Role/สิทธิ์
+- [ ] อัปเดต `docs/AI_USAGE.md` ให้ตรงกับงานจริง
 
 ## GitHub Actions (CI)
 
@@ -154,6 +178,7 @@ npm run dev
 - **Vercel:** _(pending)_
 - **Schema:** `supabase/schema.sql`
 - **Migration โบนัส:** `supabase/bonus_migration.sql`
+- **Seed demo:** `supabase/seed_demo.sql`
 
 ## การใช้ AI ในการพัฒนา
 

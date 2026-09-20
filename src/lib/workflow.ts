@@ -307,3 +307,17 @@ export async function markWaitingPart(maintenanceId: string) {
   if (updateError) throw updateError;
   await resolveMachineStatus(job.machine_uuid);
 }
+
+/** Admin: คำนวณสถานะเครื่องทุกเครื่องใหม่จาก Alarm/งานซ่อมค้าง */
+export async function syncAllMachineStatuses() {
+  const supabase = createClient();
+  const { data, error } = await supabase.from("machines").select("id");
+  if (error) throw error;
+
+  const ids = (data || []).map((m) => m.id as string);
+  const results: MachineStatus[] = [];
+  for (const id of ids) {
+    results.push(await resolveMachineStatus(id));
+  }
+  return { count: ids.length, results };
+}

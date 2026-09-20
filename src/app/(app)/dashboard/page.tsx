@@ -11,6 +11,7 @@ import {
   ToolOutlined,
   WarningOutlined,
 } from "@ant-design/icons";
+import { WorkflowSteps } from "@/components/WorkflowSteps";
 import { BarChart, DonutStat } from "@/components/Charts";
 import { createClient } from "@/lib/supabase/client";
 import { MACHINE_STATUS_LABELS, WORK_STATUS_LABELS } from "@/lib/labels";
@@ -155,6 +156,43 @@ export default function DashboardPage() {
       .map(([label, value]) => ({ label, value, color: "#0c4a6e" }));
   }, [allAlarms]);
 
+  const openOnlyAlarms = useMemo(
+    () => openAlarmRows.filter((a) => a.status === "Open").length,
+    [openAlarmRows],
+  );
+  const inProgressAlarms = useMemo(
+    () => openAlarmRows.filter((a) => a.status === "In Progress").length,
+    [openAlarmRows],
+  );
+
+  const nextAction = useMemo(() => {
+    if (openOnlyAlarms > 0) {
+      return {
+        tone: "danger" as const,
+        title: `มี Alarm สถานะ「เปิด」 ${openOnlyAlarms} รายการ`,
+        detail: "ขั้นถัดไป: ไปเมนู Alarm แล้วกด「เปิดงานซ่อม」",
+        href: "/alarms",
+        cta: "ไปเปิดงานซ่อม",
+      };
+    }
+    if (stats.openMaintenance > 0 || inProgressAlarms > 0) {
+      return {
+        tone: "warn" as const,
+        title: `มีงานซ่อมค้าง ${stats.openMaintenance} รายการ`,
+        detail: "ขั้นถัดไป: ไปเมนูบำรุงรักษา → เริ่มซ่อม → ซ่อมเสร็จ",
+        href: "/maintenance",
+        cta: "ไปงานบำรุงรักษา",
+      };
+    }
+    return {
+      tone: "ok" as const,
+      title: "ไม่มีงานค้างในตอนนี้",
+      detail: "เมื่อเกิดปัญหา ให้เริ่มที่เมนู Alarm ตามลำดับ 4 ขั้น",
+      href: "/alarms",
+      cta: "ไปบันทึก Alarm",
+    };
+  }, [openOnlyAlarms, inProgressAlarms, stats.openMaintenance]);
+
   const runningPct =
     stats.totalMachines === 0
       ? 0
@@ -173,6 +211,9 @@ export default function DashboardPage() {
       : healthTone === "warn"
         ? "มีเครื่องอยู่ระหว่างบำรุงรักษา"
         : "สายการผลิตโดยรวมปกติ";
+
+  const workflowCurrent =
+    openOnlyAlarms > 0 ? 0 : stats.openMaintenance > 0 || inProgressAlarms > 0 ? 2 : 3;
 
   return (
     <div className="dash">
@@ -196,6 +237,39 @@ export default function DashboardPage() {
 
       {error && (
         <Alert type="error" showIcon message={error} style={{ marginBottom: 16 }} />
+      )}
+
+      {!loading && (
+        <>
+          <section className="dash-section dash-workflow">
+            <div className="dash-section-head">
+              <h3>ลำดับการทำงานมาตรฐาน</h3>
+              <Tag>ต้องทำตามขั้น — ห้ามข้าม</Tag>
+            </div>
+            <WorkflowSteps current={workflowCurrent} />
+            <div className={`dash-next tone-${nextAction.tone}`}>
+              <div>
+                <p className="dash-next-label">งานถัดไปที่ต้องทำ</p>
+                <strong>{nextAction.title}</strong>
+                <p>{nextAction.detail}</p>
+              </div>
+              <Link href={nextAction.href}>
+                <Button type="primary">{nextAction.cta}</Button>
+              </Link>
+            </div>
+            <div className="dash-action-row">
+              <Link href="/alarms">
+                <Button icon={<AlertOutlined />}>1–2 Alarm</Button>
+              </Link>
+              <Link href="/maintenance">
+                <Button icon={<ToolOutlined />}>3–4 บำรุงรักษา</Button>
+              </Link>
+              <Link href="/machines">
+                <Button icon={<ClusterOutlined />}>ดูสถานะเครื่อง</Button>
+              </Link>
+            </div>
+          </section>
+        </>
       )}
 
       {loading ? (
