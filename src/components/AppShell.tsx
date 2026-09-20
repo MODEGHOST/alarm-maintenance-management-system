@@ -35,7 +35,7 @@ function AppShellInner({
         </div>
 
         <p className="sidebar-section">เมนูหลัก</p>
-        <NavLinks onNavigate={() => setOpen(false)} />
+        <NavLinks profile={profile} onNavigate={() => setOpen(false)} />
 
         <div className="sidebar-footer">
           <div className="sidebar-user">

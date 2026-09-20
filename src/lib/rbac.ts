@@ -32,6 +32,16 @@ export function canManageTechnicians(profile: Profile | null | undefined) {
   return isAdmin(profile);
 }
 
+/** Admin จัดการผู้ใช้ทั้งหมด / เปลี่ยน Role */
+export function canManageUsers(profile: Profile | null | undefined) {
+  return isAdmin(profile);
+}
+
+/** Admin + Technician เข้าดูรายชื่อผู้ใช้ได้ (Viewer ไม่เข้า) */
+export function canViewUsers(profile: Profile | null | undefined) {
+  return isAdmin(profile) || isTechnician(profile);
+}
+
 export function canExportData(profile: Profile | null | undefined) {
   return Boolean(profile);
 }
