@@ -1,7 +1,29 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { StatusBadge } from "@/components/StatusBadge";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Alert,
+  Button,
+  Card,
+  Form,
+  Input,
+  Modal,
+  Popconfirm,
+  Select,
+  Space,
+  Table,
+  Tag,
+  message,
+} from "antd";
+import {
+  DeleteOutlined,
+  EditOutlined,
+  PlusOutlined,
+  SearchOutlined,
+} from "@ant-design/icons";
+import { PageIntro } from "@/components/PageIntro";
+import { MACHINE_STATUS_LABELS } from "@/lib/labels";
+import { canManageMachines } from "@/lib/rbac";
 import { createClient } from "@/lib/supabase/client";
 import type { Machine, MachineStatus, Profile } from "@/lib/types";
 import { MACHINE_STATUSES } from "@/lib/types";
@@ -15,18 +37,26 @@ const emptyForm = {
   status: "Stop" as MachineStatus,
 };
 
+const statusColor: Record<MachineStatus, string> = {
+  Running: "success",
+  Stop: "default",
+  Alarm: "error",
+  Maintenance: "warning",
+};
+
 export default function MachinesPage() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [machines, setMachines] = useState<Machine[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
   const [filterMachine, setFilterMachine] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
-  const isAdmin = profile?.role === "admin";
+  const isAdmin = canManageMachines(profile);
 
   async function load() {
     const supabase = createClient();
@@ -55,7 +85,9 @@ export default function MachinesPage() {
   useEffect(() => {
     load()
       .catch((err) =>
-        setError(err instanceof Error ? err.message : "Failed to load machines"),
+        setError(
+          err instanceof Error ? err.message : "โหลดข้อมูลเครื่องจักรไม่สำเร็จ",
+        ),
       )
       .finally(() => setLoading(false));
   }, []);
@@ -71,7 +103,14 @@ export default function MachinesPage() {
     });
   }, [machines, filterMachine, filterStatus]);
 
-  function startEdit(machine: Machine) {
+  function openCreate() {
+    setEditingId(null);
+    setForm(emptyForm);
+    setError(null);
+    setModalOpen(true);
+  }
+
+  function openEdit(machine: Machine) {
     setEditingId(machine.id);
     setForm({
       machine_id: machine.machine_id,
@@ -81,21 +120,20 @@ export default function MachinesPage() {
       status: machine.status,
     });
     setError(null);
-    setMessage(null);
+    setModalOpen(true);
   }
 
-  function resetForm() {
+  function closeModal() {
+    setModalOpen(false);
     setEditingId(null);
     setForm(emptyForm);
   }
 
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault();
+  async function onSubmit() {
     setError(null);
-    setMessage(null);
 
     if (!isAdmin) {
-      setError("Only Admin can create or update machines");
+      setError("เฉพาะผู้ดูแลระบบเท่านั้นที่เพิ่มหรือแก้ไขเครื่องจักรได้");
       return;
     }
 
@@ -105,6 +143,18 @@ export default function MachinesPage() {
       return;
     }
 
+    // ตรวจซ้ำฝั่ง UI ก่อนส่ง (DB ยังมี unique constraint อีกชั้น)
+    const duplicate = machines.some(
+      (m) =>
+        m.machine_id.toLowerCase() === form.machine_id.trim().toLowerCase() &&
+        m.id !== editingId,
+    );
+    if (duplicate) {
+      setError("รหัสเครื่องนี้มีอยู่แล้ว");
+      return;
+    }
+
+    setSaving(true);
     const supabase = createClient();
     const payload = {
       ...form,
@@ -115,43 +165,45 @@ export default function MachinesPage() {
       updated_at: new Date().toISOString(),
     };
 
-    if (editingId) {
-      const { error: updateError } = await supabase
-        .from("machines")
-        .update(payload)
-        .eq("id", editingId);
-      if (updateError) {
-        setError(
-          updateError.message.includes("duplicate")
-            ? "Machine ID already exists"
-            : updateError.message,
-        );
-        return;
+    try {
+      if (editingId) {
+        const { error: updateError } = await supabase
+          .from("machines")
+          .update(payload)
+          .eq("id", editingId);
+        if (updateError) {
+          setError(
+            updateError.message.includes("duplicate")
+              ? "รหัสเครื่องนี้มีอยู่แล้ว"
+              : updateError.message,
+          );
+          return;
+        }
+        message.success("อัปเดตเครื่องจักรแล้ว");
+      } else {
+        const { error: insertError } = await supabase
+          .from("machines")
+          .insert(payload);
+        if (insertError) {
+          setError(
+            insertError.message.includes("duplicate")
+              ? "รหัสเครื่องนี้มีอยู่แล้ว"
+              : insertError.message,
+          );
+          return;
+        }
+        message.success("เพิ่มเครื่องจักรแล้ว");
       }
-      setMessage("Machine updated");
-    } else {
-      const { error: insertError } = await supabase
-        .from("machines")
-        .insert(payload);
-      if (insertError) {
-        setError(
-          insertError.message.includes("duplicate")
-            ? "Machine ID already exists"
-            : insertError.message,
-        );
-        return;
-      }
-      setMessage("Machine created");
-    }
 
-    resetForm();
-    await load();
+      closeModal();
+      await load();
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function onDelete(id: string) {
     if (!isAdmin) return;
-    if (!confirm("Delete this machine?")) return;
-
     const supabase = createClient();
     const { error: deleteError } = await supabase
       .from("machines")
@@ -163,200 +215,197 @@ export default function MachinesPage() {
       return;
     }
 
-    setMessage("Machine deleted");
-    if (editingId === id) resetForm();
+    message.success("ลบเครื่องจักรแล้ว");
+    if (editingId === id) closeModal();
     await load();
   }
 
+  const columns = [
+    {
+      title: "รหัสเครื่อง",
+      dataIndex: "machine_id",
+      key: "machine_id",
+      render: (v: string) => <strong>{v}</strong>,
+    },
+    { title: "ชื่อ", dataIndex: "machine_name", key: "machine_name" },
+    { title: "ประเภท", dataIndex: "machine_type", key: "machine_type" },
+    { title: "ตำแหน่ง", dataIndex: "location", key: "location" },
+    {
+      title: "สถานะ",
+      dataIndex: "status",
+      key: "status",
+      render: (status: MachineStatus) => (
+        <Tag color={statusColor[status]}>{MACHINE_STATUS_LABELS[status]}</Tag>
+      ),
+    },
+    ...(isAdmin
+      ? [
+          {
+            title: "จัดการ",
+            key: "actions",
+            render: (_: unknown, machine: Machine) => (
+              <Space>
+                <Button
+                  type="link"
+                  icon={<EditOutlined />}
+                  onClick={() => openEdit(machine)}
+                >
+                  แก้ไข
+                </Button>
+                <Popconfirm
+                  title="ลบเครื่องจักรนี้?"
+                  description="ข้อมูล Alarm/งานที่ผูกกับเครื่องนี้อาจถูกลบตาม"
+                  okText="ลบ"
+                  cancelText="ยกเลิก"
+                  okButtonProps={{ danger: true }}
+                  onConfirm={() => onDelete(machine.id)}
+                >
+                  <Button type="link" danger icon={<DeleteOutlined />}>
+                    ลบ
+                  </Button>
+                </Popconfirm>
+              </Space>
+            ),
+          },
+        ]
+      : []),
+  ];
+
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold">Machine Master</h2>
-        <p className="text-sm text-slate-600">
-          Create, view, update, and delete machines
-          {!isAdmin && " (Technician: read only)"}
-        </p>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <PageIntro
+          eyebrow="Machine Master"
+          title="ทะเบียนเครื่องจักร"
+          description={
+            isAdmin
+              ? "เพิ่ม ดู แก้ไข และลบเครื่องในโรงงาน — เป็นฐานข้อมูลหลักก่อนบันทึก Alarm หรืองานซ่อม"
+              : "ดูรายการเครื่องจักรและสถานะปัจจุบัน (ช่างเทคนิคดูได้อย่างเดียว)"
+          }
+        />
+        {isAdmin && (
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+            เพิ่มเครื่องจักร
+          </Button>
+        )}
       </div>
 
-      <div className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:grid-cols-2">
-        <div>
-          <label className="mb-1 block text-sm font-medium">
-            Search Machine
-          </label>
-          <input
+      {error && !modalOpen && (
+        <Alert
+          type="error"
+          showIcon
+          message={error}
+          closable
+          onClose={() => setError(null)}
+        />
+      )}
+
+      <Card size="small" className="ui-card">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Input
+            allowClear
+            prefix={<SearchOutlined />}
+            placeholder="ค้นหารหัสหรือชื่อเครื่อง"
             value={filterMachine}
             onChange={(e) => setFilterMachine(e.target.value)}
-            className="w-full rounded-md border border-slate-300 px-3 py-2"
-            placeholder="Machine ID or Name"
+          />
+          <Select
+            allowClear
+            placeholder="กรองสถานะ"
+            value={filterStatus || undefined}
+            onChange={(v) => setFilterStatus(v || "")}
+            options={MACHINE_STATUSES.map((status) => ({
+              value: status,
+              label: MACHINE_STATUS_LABELS[status],
+            }))}
           />
         </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium">Filter Status</label>
-          <select
-            value={filterStatus}
-            onChange={(e) => setFilterStatus(e.target.value)}
-            className="w-full rounded-md border border-slate-300 px-3 py-2"
-          >
-            <option value="">All</option>
-            {MACHINE_STATUSES.map((status) => (
-              <option key={status} value={status}>
-                {status}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
+      </Card>
 
-      {isAdmin && (
-        <form
-          onSubmit={onSubmit}
-          className="space-y-3 rounded-xl border border-slate-200 bg-white p-4"
-        >
-          <h3 className="font-semibold">
-            {editingId ? "Edit Machine" : "Add Machine"}
-          </h3>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <input
+      <Card
+        className="ui-card"
+        title={`รายการเครื่องจักร (${filtered.length})`}
+      >
+        <Table
+          rowKey="id"
+          loading={loading}
+          columns={columns}
+          dataSource={filtered}
+          pagination={{ pageSize: 8, showSizeChanger: false }}
+          scroll={{ x: true }}
+          locale={{ emptyText: "ยังไม่มีเครื่องจักร" }}
+        />
+      </Card>
+
+      <Modal
+        centered
+        title={editingId ? "แก้ไขเครื่องจักร" : "เพิ่มเครื่องจักรใหม่"}
+        open={modalOpen}
+        onCancel={closeModal}
+        onOk={onSubmit}
+        okText={editingId ? "บันทึก" : "เพิ่มเครื่องจักร"}
+        cancelText="ยกเลิก"
+        confirmLoading={saving}
+        destroyOnHidden
+        width={640}
+      >
+        {error && (
+          <Alert
+            type="error"
+            showIcon
+            message={error}
+            style={{ marginBottom: 16 }}
+          />
+        )}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Form.Item label="รหัสเครื่อง" required style={{ marginBottom: 0 }}>
+            <Input
               value={form.machine_id}
               onChange={(e) =>
                 setForm((f) => ({ ...f, machine_id: e.target.value }))
               }
-              className="rounded-md border border-slate-300 px-3 py-2"
-              placeholder="Machine ID *"
+              placeholder="เช่น CNC-001"
             />
-            <input
+          </Form.Item>
+          <Form.Item label="ชื่อเครื่อง" required style={{ marginBottom: 0 }}>
+            <Input
               value={form.machine_name}
               onChange={(e) =>
                 setForm((f) => ({ ...f, machine_name: e.target.value }))
               }
-              className="rounded-md border border-slate-300 px-3 py-2"
-              placeholder="Machine Name *"
+              placeholder="เช่น CNC Milling A1"
             />
-            <input
+          </Form.Item>
+          <Form.Item label="ประเภท" required style={{ marginBottom: 0 }}>
+            <Input
               value={form.machine_type}
               onChange={(e) =>
                 setForm((f) => ({ ...f, machine_type: e.target.value }))
               }
-              className="rounded-md border border-slate-300 px-3 py-2"
-              placeholder="Machine Type *"
+              placeholder="เช่น CNC, Robot"
             />
-            <input
+          </Form.Item>
+          <Form.Item label="ตำแหน่งติดตั้ง" required style={{ marginBottom: 0 }}>
+            <Input
               value={form.location}
               onChange={(e) =>
                 setForm((f) => ({ ...f, location: e.target.value }))
               }
-              className="rounded-md border border-slate-300 px-3 py-2"
-              placeholder="Location *"
+              placeholder="เช่น Line 1"
             />
-            <select
+          </Form.Item>
+          <Form.Item label="สถานะ" style={{ marginBottom: 0 }}>
+            <Select
               value={form.status}
-              onChange={(e) =>
-                setForm((f) => ({
-                  ...f,
-                  status: e.target.value as MachineStatus,
-                }))
-              }
-              className="rounded-md border border-slate-300 px-3 py-2"
-            >
-              {MACHINE_STATUSES.map((status) => (
-                <option key={status} value={status}>
-                  {status}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex gap-2">
-            <button
-              type="submit"
-              className="rounded-md bg-slate-900 px-4 py-2 text-white hover:bg-slate-800"
-            >
-              {editingId ? "Update" : "Create"}
-            </button>
-            {editingId && (
-              <button
-                type="button"
-                onClick={resetForm}
-                className="rounded-md border border-slate-300 px-4 py-2"
-              >
-                Cancel
-              </button>
-            )}
-          </div>
-        </form>
-      )}
-
-      {error && (
-        <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
-          {error}
-        </p>
-      )}
-      {message && (
-        <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          {message}
-        </p>
-      )}
-
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-        <table className="min-w-full text-left text-sm">
-          <thead className="bg-slate-50 text-slate-600">
-            <tr>
-              <th className="px-3 py-2">Machine ID</th>
-              <th className="px-3 py-2">Name</th>
-              <th className="px-3 py-2">Type</th>
-              <th className="px-3 py-2">Location</th>
-              <th className="px-3 py-2">Status</th>
-              {isAdmin && <th className="px-3 py-2">Actions</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr>
-                <td className="px-3 py-4 text-slate-500" colSpan={6}>
-                  Loading...
-                </td>
-              </tr>
-            ) : filtered.length === 0 ? (
-              <tr>
-                <td className="px-3 py-4 text-slate-500" colSpan={6}>
-                  No machines found
-                </td>
-              </tr>
-            ) : (
-              filtered.map((machine) => (
-                <tr key={machine.id} className="border-t border-slate-100">
-                  <td className="px-3 py-2 font-medium">{machine.machine_id}</td>
-                  <td className="px-3 py-2">{machine.machine_name}</td>
-                  <td className="px-3 py-2">{machine.machine_type}</td>
-                  <td className="px-3 py-2">{machine.location}</td>
-                  <td className="px-3 py-2">
-                    <StatusBadge status={machine.status} kind="machine" />
-                  </td>
-                  {isAdmin && (
-                    <td className="px-3 py-2">
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => startEdit(machine)}
-                          className="text-slate-700 underline"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onDelete(machine.id)}
-                          className="text-red-700 underline"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </td>
-                  )}
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+              onChange={(status) => setForm((f) => ({ ...f, status }))}
+              options={MACHINE_STATUSES.map((status) => ({
+                value: status,
+                label: MACHINE_STATUS_LABELS[status],
+              }))}
+            />
+          </Form.Item>
+        </div>
+      </Modal>
     </div>
   );
 }

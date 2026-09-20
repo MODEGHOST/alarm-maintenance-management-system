@@ -1,13 +1,110 @@
+"use client";
+
 import Link from "next/link";
+import { useState } from "react";
+import { Alert, Button } from "antd";
+import { MenuFoldOutlined, MenuUnfoldOutlined } from "@ant-design/icons";
 import { logout } from "@/app/actions/auth";
+import { AlertProvider, useAlertCounts } from "@/components/AlertProvider";
+import { NavLinks } from "@/components/NavLinks";
+import { roleLabel } from "@/lib/labels";
 import type { Profile } from "@/lib/types";
 
-const nav = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/machines", label: "Machines" },
-  { href: "/alarms", label: "Alarms" },
-  { href: "/maintenance", label: "Maintenance" },
-];
+function AppShellInner({
+  profile,
+  children,
+}: {
+  profile: Profile;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const { openAlarms, alarmMachines } = useAlertCounts();
+
+  return (
+    <div className={`app-layout ${open ? "sidebar-open" : ""}`}>
+      <aside className="app-sidebar">
+        <div className="sidebar-brand">
+          <div className="app-mark" aria-hidden>
+            AM
+          </div>
+          <div>
+            <p className="app-kicker">Automation Floor</p>
+            <strong className="sidebar-title">Alarm & บำรุงรักษา</strong>
+          </div>
+        </div>
+
+        <p className="sidebar-section">เมนูหลัก</p>
+        <NavLinks onNavigate={() => setOpen(false)} />
+
+        <div className="sidebar-footer">
+          <div className="sidebar-user">
+            <strong>{profile.full_name || profile.email}</strong>
+            <span>{roleLabel(profile.role)}</span>
+          </div>
+          <form action={logout}>
+            <Button htmlType="submit" block>
+              ออกจากระบบ
+            </Button>
+          </form>
+        </div>
+      </aside>
+
+      {open && (
+        <button
+          type="button"
+          className="sidebar-backdrop"
+          aria-label="ปิดเมนู"
+          onClick={() => setOpen(false)}
+        />
+      )}
+
+      <div className="app-content">
+        <header className="app-topbar">
+          <button
+            type="button"
+            className="sidebar-toggle"
+            onClick={() => setOpen((v) => !v)}
+            aria-label="เปิด/ปิดเมนู"
+          >
+            {open ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />}
+          </button>
+          <div>
+            <h1 className="app-product">ระบบจัดการ Alarm & บำรุงรักษา</h1>
+            <p className="app-purpose">
+              ติดตามสถานะเครื่องจักร บันทึก Alarm และวางแผนงานซ่อมบำรุง
+            </p>
+          </div>
+          <div className="app-user app-user-desktop">
+            <div className="app-user-meta">
+              <strong>{profile.full_name || profile.email}</strong>
+              <span>{roleLabel(profile.role)}</span>
+            </div>
+          </div>
+        </header>
+
+        {openAlarms > 0 && (
+          <div className="app-alert-strip">
+            <Alert
+              type="warning"
+              showIcon
+              banner
+              message={`แจ้งเตือน: มี Alarm เปิดอยู่ ${openAlarms} รายการ (เครื่องสถานะ Alarm ${alarmMachines} เครื่อง)`}
+              action={
+                <Link href="/alarms">
+                  <Button size="small" type="primary" danger>
+                    ดู Alarm
+                  </Button>
+                </Link>
+              }
+            />
+          </div>
+        )}
+
+        <main className="app-main">{children}</main>
+      </div>
+    </div>
+  );
+}
 
 export function AppShell({
   profile,
@@ -17,44 +114,33 @@ export function AppShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3">
-          <div>
-            <p className="text-sm font-semibold tracking-wide text-slate-500">
-              Automation Systems
-            </p>
-            <h1 className="text-lg font-bold text-slate-900">
-              Alarm & Maintenance
-            </h1>
-          </div>
-          <div className="flex items-center gap-3 text-sm">
-            <span className="rounded-full bg-slate-100 px-3 py-1 capitalize">
-              {profile.full_name || profile.email} · {profile.role}
-            </span>
-            <form action={logout}>
-              <button
-                type="submit"
-                className="rounded-md bg-slate-800 px-3 py-1.5 text-white hover:bg-slate-700"
-              >
-                Logout
-              </button>
-            </form>
-          </div>
-        </div>
-        <nav className="mx-auto flex max-w-6xl gap-1 overflow-x-auto px-4 pb-3">
-          {nav.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="rounded-md px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
-            >
-              {item.label}
-            </Link>
-          ))}
-        </nav>
-      </header>
-      <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
+    <AlertProvider>
+      <AppShellInner profile={profile}>{children}</AppShellInner>
+    </AlertProvider>
+  );
+}
+
+export function ProfileMissingPanel({ email }: { email?: string | null }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4">
+      <div className="w-full max-w-lg rounded-xl border border-amber-200 bg-white p-6 shadow-sm">
+        <h1 className="text-xl font-bold text-slate-900">ไม่พบโปรไฟล์ผู้ใช้</h1>
+        <p className="mt-2 text-sm text-slate-600">
+          เข้าสู่ระบบด้วย {email || "ไม่ทราบอีเมล"} แต่ยังไม่มีข้อมูลในตาราง{" "}
+          <code>profiles</code> กรุณารัน <code>supabase/schema.sql</code>{" "}
+          แล้วตั้งค่า role เป็น <code>admin</code> หรือ <code>technician</code>
+        </p>
+        <form action={logout} className="mt-4">
+          <Button type="primary" htmlType="submit">
+            ออกจากระบบ
+          </Button>
+        </form>
+        <p className="mt-3 text-sm">
+          <Link href="/login" className="underline">
+            กลับหน้าเข้าสู่ระบบ
+          </Link>
+        </p>
+      </div>
     </div>
   );
 }

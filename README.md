@@ -1,49 +1,49 @@
 # Alarm & Maintenance Management System
 
-Web application for factory automation: manage machines, alarm records, and maintenance work.
+ระบบจัดการ Alarm และงานบำรุงรักษาสำหรับโรงงาน / Automation Floor
 
-## Objectives
+## วัตถุประสงค์
 
-Support Automation / plant operations with:
+พัฒนา Web Application สำหรับงาน Automation และบำรุงรักษาเครื่องจักร โดยใช้เทคโนโลยีสมัยใหม่ และอนุญาตให้ใช้ AI ช่วยพัฒนาได้ทุกขั้นตอน
 
-- Authentication and role-based access (Admin, Technician)
-- Machine master data (CRUD)
-- Alarm records (Create / Read / Update)
-- Maintenance records (Create / Read / Update)
-- Search / filter, dashboard summary, and input validation
-
-## Tech Stack
+## Technology Stack
 
 - Next.js (App Router) + TypeScript
 - Tailwind CSS
-- Supabase (Auth + PostgreSQL)
+- Ant Design
+- Supabase (Auth + PostgreSQL + RLS)
 - GitHub + GitHub Actions (CI)
 - Vercel (Deployment)
-- AI-assisted development (Cursor / ChatGPT)
 
-## Main Features
+## ฟังก์ชันหลัก
 
-| Module | Capability |
+| โมดูล | ความสามารถ |
 |--------|------------|
-| Auth | Login / Logout with Supabase Auth |
-| Roles | Admin: full machine control; Technician: view machines, manage alarms & maintenance, use dashboard |
-| Machines | CRUD + status: Running / Stop / Alarm / Maintenance |
-| Alarms | Create / Read / Update + status: Open / In Progress / Closed |
-| Maintenance | Create / Read / Update |
-| Search / Filter | At least Machine + Status on list pages |
-| Dashboard | Counts for machines by status, alarms, and maintenance |
-| Validation | Required fields, unique Machine ID, error messages |
+| Authentication | Login / Logout / Register ด้วย Supabase Auth |
+| Role-Based Access | Admin และ Technician (คุมสิทธิ์ทั้งฝั่ง UI และ Supabase RLS) |
+| Machine Master | CRUD เครื่องจักร (Admin เท่านั้น) |
+| Alarm Record | Create / Read / Update + เปิดงานซ่อม / ปิดกลับปกติ |
+| Maintenance | Create / Read / Update + ปิดงานซ่อมเสร็จ |
+| Search / Filter | ค้นหาและกรองอย่างน้อย 2 เงื่อนไข |
+| Dashboard | สรุปสถานะ + แสดงชื่อเครื่องที่ติด Alarm / กำลังซ่อม |
+| Validation | ห้ามว่าง, Machine ID ไม่ซ้ำ, ตรวจรูปแบบ/ความยาว, แสดงข้อความเตือน |
+| Notification | Badge เมนู + แถบแจ้งเตือนเมื่อมี Alarm เปิด |
+
+### สิทธิ์ตาม Role
+
+- **Admin**: จัดการ Machine / Alarm / Maintenance / ดู Dashboard ได้ทั้งหมด
+- **Technician**: ดู Machine, จัดการ Alarm และ Maintenance, ดู Dashboard ได้ (แก้/ลบ Machine ไม่ได้)
 
 ## Database Structure
 
-Tables (see `supabase/schema.sql`):
+ตารางหลัก (ดูรายละเอียดใน `supabase/schema.sql`):
 
-- `profiles` — linked to `auth.users`, stores `role` (`admin` | `technician`)
-- `machines` — machine master
-- `alarms` — alarm records (FK → machines, profiles)
-- `maintenance_records` — maintenance work (FK → machines, profiles)
+- `profiles` — ผูกกับ `auth.users`, เก็บ `role`
+- `machines` — ทะเบียนเครื่องจักร (`machine_id` เป็น unique)
+- `alarms` — บันทึก Alarm
+- `maintenance_records` — งานบำรุงรักษา
 
-Relationships:
+ความสัมพันธ์:
 
 ```
 auth.users 1─1 profiles
@@ -53,9 +53,9 @@ profiles 1─* alarms (created_by)
 profiles 1─* maintenance_records (technician_id)
 ```
 
-## Setup
+## วิธีติดตั้งและใช้งาน
 
-### 1. Clone and install
+### 1) Clone และติดตั้ง
 
 ```bash
 git clone https://github.com/MODEGHOST/alarm-maintenance-management-system.git
@@ -63,56 +63,53 @@ cd alarm-maintenance-management-system
 npm install
 ```
 
-### 2. Create Supabase project
+### 2) ตั้งค่า Supabase
 
-1. Create a project at [supabase.com](https://supabase.com)
-2. Open **SQL Editor** and run the full script in `supabase/schema.sql`
-3. Copy **Project URL** and **anon public** key from Project Settings → API
+1. สร้างโปรเจกต์ที่ [supabase.com](https://supabase.com)
+2. เปิด SQL Editor แล้วรันไฟล์ `supabase/schema.sql`
+3. ปิด Confirm email ที่ Authentication → Providers → Email (เพื่อเทสง่าย)
+4. คัดลอก Project URL และ anon/publishable key
 
-### 3. Environment variables
+### 3) Environment Variables
 
-Copy `.env.example` to `.env.local`:
-
-```bash
-cp .env.example .env.local
-```
-
-Fill in:
+คัดลอก `.env.example` เป็น `.env.local`:
 
 ```env
 NEXT_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-or-publishable-key
 ```
 
-**Do not** put Service Role Key in the client app or commit secrets to GitHub.
+**ห้าม** ใส่ Service Role Key ในฝั่ง client และห้าม commit ลง GitHub
 
-### 4. Create users (Admin / Technician)
-
-In Supabase **Authentication → Users → Add user**:
-
-1. Create Admin user (email + password)
-2. Create Technician user (email + password)
-
-Then in **Table Editor → profiles**, set:
-
-- Admin row → `role = admin`
-- Technician row → `role = technician`
-
-(If the trigger created profiles automatically after signup, just update the role.)
-
-### 5. Run locally
+### 4) รันระบบ
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000)
+เปิด [http://localhost:3000](http://localhost:3000)
+
+### บัญชีทดสอบ (ถ้ามีในโปรเจกต์ของคุณ)
+
+| Role | Email | Password |
+|------|--------|----------|
+| Admin | admin@test.com | Test123456 |
+| Technician | tech@test.com | Test123456 |
+
+หรือสมัครใหม่ที่หน้า Register (ได้ role technician อัตโนมัติ) แล้วไปตั้ง `profiles.role = admin` ใน Supabase ถ้าต้องการ
+
+## Workflow การทำงาน
+
+1. เกิดปัญหา → บันทึกที่เมนู **Alarm**
+2. กด **เปิดงานซ่อม** → สร้างงานใน **บำรุงรักษา** อัตโนมัติ
+3. ซ่อมเสร็จ → กด **ซ่อมเสร็จ** หรือ **ปิด/กลับปกติ**
+4. ระบบปิดงาน/Alarm และคืนสถานะเครื่องเป็น **กำลังทำงาน** เมื่อไม่มีงานค้าง
 
 ## GitHub Actions (CI)
 
-Workflow: `.github/workflows/ci.yml`
+ไฟล์: `.github/workflows/ci.yml`
 
-On every push / pull request to `main`:
+เมื่อ push / pull request ไปที่ `main` จะรัน:
 
 1. Install Dependencies (`npm ci`)
 2. Lint (`npm run lint`)
@@ -120,31 +117,24 @@ On every push / pull request to `main`:
 
 ## Vercel Deployment
 
-1. Import this GitHub repository in Vercel
-2. Add environment variables:
+1. Import repository นี้ใน Vercel
+2. ใส่ Environment Variables:
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 3. Deploy
 
-**Vercel URL:** _(add after deploy)_  
+**Vercel URL:** _(ใส่หลัง deploy)_  
 `https://YOUR-PROJECT.vercel.app`
 
-## Project Links
+## ลิงก์โปรเจกต์
 
 - **GitHub:** https://github.com/MODEGHOST/alarm-maintenance-management-system
 - **Vercel:** _(pending)_
-- **Supabase schema:** `supabase/schema.sql`
+- **Schema:** `supabase/schema.sql`
 
-## AI Usage Summary
+## การใช้ AI ในการพัฒนา
 
-AI (Cursor) was used to:
+ใช้ Cursor AI ช่วยวิเคราะห์โจทย์ ออกแบบฐานข้อมูล เขียนโค้ด UI/UX, SQL, CI, README และแก้ bug  
+ผู้พัฒนาเป็นผู้รับผิดชอบความถูกต้อง ความปลอดภัย และการทดสอบก่อนส่ง
 
-- Analyze assignment requirements
-- Design Supabase schema and RLS policies
-- Generate Next.js app structure, UI pages, and validation
-- Create GitHub Actions CI workflow and README
-- Debug build / TypeScript issues during development
-
-Human responsibility: verify correctness, configure Supabase/Vercel secrets safely, and test end-to-end before submission.
-
-See also: `docs/AI_USAGE.md`
+รายละเอียดเพิ่มเติม: `docs/AI_USAGE.md`

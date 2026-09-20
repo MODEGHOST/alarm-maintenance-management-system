@@ -1,11 +1,42 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { StatusBadge } from "@/components/StatusBadge";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+  Alert,
+  Button,
+  Card,
+  Form,
+  Input,
+  Modal,
+  Popconfirm,
+  Select,
+  Space,
+  Table,
+  Tag,
+  message,
+} from "antd";
+import {
+  CheckCircleOutlined,
+  EditOutlined,
+  PlusOutlined,
+  SearchOutlined,
+  ToolOutlined,
+} from "@ant-design/icons";
+import { DateTimeField } from "@/components/DateTimeField";
+import { PageIntro } from "@/components/PageIntro";
+import { useAlertCounts } from "@/components/AlertProvider";
+import { canManageAlarms } from "@/lib/rbac";
+import { WORK_STATUS_LABELS } from "@/lib/labels";
 import { createClient } from "@/lib/supabase/client";
 import type { Alarm, AlarmStatus, Machine, Profile } from "@/lib/types";
 import { ALARM_STATUSES } from "@/lib/types";
 import { validateAlarmForm } from "@/lib/validations";
+import {
+  createMaintenanceFromAlarm,
+  markAlarmResolved,
+  syncMachineAfterAlarmChange,
+} from "@/lib/workflow";
 
 const emptyForm = {
   machine_uuid: "",
@@ -16,17 +47,26 @@ const emptyForm = {
   occurred_at: "",
 };
 
+const statusColor: Record<AlarmStatus, string> = {
+  Open: "error",
+  "In Progress": "warning",
+  Closed: "success",
+};
+
 export default function AlarmsPage() {
+  const router = useRouter();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [machines, setMachines] = useState<Machine[]>([]);
   const [alarms, setAlarms] = useState<Alarm[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
   const [filterMachine, setFilterMachine] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const { refresh: refreshAlerts } = useAlertCounts();
 
   async function load() {
     const supabase = createClient();
@@ -61,7 +101,7 @@ export default function AlarmsPage() {
   useEffect(() => {
     load()
       .catch((err) =>
-        setError(err instanceof Error ? err.message : "Failed to load alarms"),
+        setError(err instanceof Error ? err.message : "โหลด Alarm ไม่สำเร็จ"),
       )
       .finally(() => setLoading(false));
   }, []);
@@ -78,7 +118,14 @@ export default function AlarmsPage() {
     });
   }, [alarms, filterMachine, filterStatus]);
 
-  function startEdit(alarm: Alarm) {
+  function openCreate() {
+    setEditingId(null);
+    setForm(emptyForm);
+    setError(null);
+    setModalOpen(true);
+  }
+
+  function openEdit(alarm: Alarm) {
     setEditingId(alarm.id);
     setForm({
       machine_uuid: alarm.machine_uuid,
@@ -86,30 +133,36 @@ export default function AlarmsPage() {
       alarm_description: alarm.alarm_description,
       cause: alarm.cause || "",
       status: alarm.status,
-      occurred_at: alarm.occurred_at
-        ? new Date(alarm.occurred_at).toISOString().slice(0, 16)
-        : "",
+      occurred_at: alarm.occurred_at || "",
     });
     setError(null);
-    setMessage(null);
+    setModalOpen(true);
   }
 
-  function resetForm() {
+  function closeModal() {
+    setModalOpen(false);
     setEditingId(null);
     setForm(emptyForm);
   }
 
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault();
+  async function onSubmit() {
     setError(null);
-    setMessage(null);
-
-    const validationError = validateAlarmForm(form);
+    if (!canManageAlarms(profile)) {
+      setError("คุณไม่มีสิทธิ์จัดการ Alarm");
+      return;
+    }
+    const validationError = validateAlarmForm({
+      machine_uuid: form.machine_uuid,
+      alarm_code: form.alarm_code,
+      alarm_description: form.alarm_description,
+      cause: form.cause,
+    });
     if (validationError) {
       setError(validationError);
       return;
     }
 
+    setSaving(true);
     const supabase = createClient();
     const payload = {
       machine_uuid: form.machine_uuid,
@@ -121,226 +174,300 @@ export default function AlarmsPage() {
         ? new Date(form.occurred_at).toISOString()
         : new Date().toISOString(),
       updated_at: new Date().toISOString(),
-      created_by: profile?.id || null,
     };
 
-    if (editingId) {
-      const { error: updateError } = await supabase
-        .from("alarms")
-        .update(payload)
-        .eq("id", editingId);
-      if (updateError) {
-        setError(updateError.message);
-        return;
+    try {
+      if (editingId) {
+        const { error: updateError } = await supabase
+          .from("alarms")
+          .update(payload)
+          .eq("id", editingId);
+        if (updateError) {
+          setError(updateError.message);
+          return;
+        }
+        message.success("อัปเดต Alarm แล้ว");
+      } else {
+        const { error: insertError } = await supabase.from("alarms").insert({
+          ...payload,
+          created_by: profile?.id || null,
+        });
+        if (insertError) {
+          setError(insertError.message);
+          return;
+        }
+        message.success("บันทึก Alarm แล้ว");
       }
-      setMessage("Alarm updated");
-    } else {
-      const { error: insertError } = await supabase.from("alarms").insert(payload);
-      if (insertError) {
-        setError(insertError.message);
-        return;
-      }
-      setMessage("Alarm created");
-    }
 
-    resetForm();
-    await load();
+      await syncMachineAfterAlarmChange(form.machine_uuid, form.status);
+      closeModal();
+      await load();
+      await refreshAlerts();
+    } finally {
+      setSaving(false);
+    }
   }
 
+  async function startRepair(alarm: Alarm) {
+    try {
+      await createMaintenanceFromAlarm({
+        alarmId: alarm.id,
+        machineUuid: alarm.machine_uuid,
+        alarmCode: alarm.alarm_code,
+        alarmDescription: alarm.alarm_description,
+        technicianId: profile?.id || null,
+      });
+      message.success("เปิดงานซ่อมแล้ว และอัปเดตสถานะ Alarm/เครื่องจักร");
+      await load();
+      await refreshAlerts();
+      router.push("/maintenance");
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "เปิดงานซ่อมไม่สำเร็จ");
+    }
+  }
+
+  async function resolveAlarm(alarm: Alarm) {
+    try {
+      const next = await markAlarmResolved({
+        alarmId: alarm.id,
+        machineUuid: alarm.machine_uuid,
+        closeOpenMaintenance: true,
+      });
+      message.success(
+        next === "Running"
+          ? "ปิด Alarm แล้ว เครื่องกลับสู่สถานะกำลังทำงาน"
+          : `ปิด Alarm แล้ว สถานะเครื่องเป็น ${next}`,
+      );
+      await load();
+      await refreshAlerts();
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "ปิด Alarm ไม่สำเร็จ");
+    }
+  }
+
+  const columns = [
+    {
+      title: "เครื่องจักร",
+      key: "machine",
+      render: (_: unknown, alarm: Alarm) =>
+        `${alarm.machines?.machine_id || "-"} ${
+          alarm.machines?.machine_name ? `(${alarm.machines.machine_name})` : ""
+        }`,
+    },
+    {
+      title: "รหัส",
+      dataIndex: "alarm_code",
+      key: "alarm_code",
+      render: (v: string) => <strong>{v}</strong>,
+    },
+    {
+      title: "รายละเอียด",
+      dataIndex: "alarm_description",
+      key: "alarm_description",
+    },
+    {
+      title: "วันเวลา",
+      dataIndex: "occurred_at",
+      key: "occurred_at",
+      render: (v: string) => new Date(v).toLocaleString("th-TH"),
+    },
+    {
+      title: "สถานะ",
+      dataIndex: "status",
+      key: "status",
+      render: (status: AlarmStatus) => (
+        <Tag color={statusColor[status]}>{WORK_STATUS_LABELS[status]}</Tag>
+      ),
+    },
+    {
+      title: "จัดการ",
+      key: "actions",
+      width: 280,
+      render: (_: unknown, alarm: Alarm) => (
+        <Space wrap size={0}>
+          <Button
+            type="link"
+            icon={<EditOutlined />}
+            onClick={() => openEdit(alarm)}
+          >
+            แก้ไข
+          </Button>
+          {alarm.status !== "Closed" && (
+            <>
+              <Popconfirm
+                title="เปิดงานซ่อมจาก Alarm นี้?"
+                description="ระบบจะสร้างงานบำรุงรักษา และตั้งเครื่องเป็นซ่อมบำรุง"
+                okText="เปิดงานซ่อม"
+                cancelText="ยกเลิก"
+                onConfirm={() => startRepair(alarm)}
+              >
+                <Button type="link" icon={<ToolOutlined />}>
+                  เปิดงานซ่อม
+                </Button>
+              </Popconfirm>
+              <Popconfirm
+                title="ปิด Alarm และทำให้เครื่องกลับปกติ?"
+                description="จะปิด Alarm และปิดงานซ่อมที่ค้างของเครื่องนี้"
+                okText="ปิดและกลับปกติ"
+                cancelText="ยกเลิก"
+                onConfirm={() => resolveAlarm(alarm)}
+              >
+                <Button type="link" icon={<CheckCircleOutlined />}>
+                  ปิด/กลับปกติ
+                </Button>
+              </Popconfirm>
+            </>
+          )}
+        </Space>
+      ),
+    },
+  ];
+
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold">Alarm Records</h2>
-        <p className="text-sm text-slate-600">
-          Create, view, and update alarm records
-        </p>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <PageIntro
+          eyebrow="Alarm Record"
+          title="บันทึก Alarm"
+          description="ขั้นที่ 1: แจ้งปัญหา → กด 'เปิดงานซ่อม' เพื่อสร้างงานบำรุงรักษา → ซ่อมเสร็จแล้วกด 'ปิด/กลับปกติ' ให้เครื่องกลับมาทำงาน"
+        />
+        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+          เพิ่ม Alarm
+        </Button>
       </div>
 
-      <div className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:grid-cols-2">
-        <div>
-          <label className="mb-1 block text-sm font-medium">
-            Search Machine / Alarm Code
-          </label>
-          <input
+      {error && !modalOpen && (
+        <Alert
+          type="error"
+          showIcon
+          message={error}
+          closable
+          onClose={() => setError(null)}
+        />
+      )}
+
+      <Card size="small" className="ui-card">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Input
+            allowClear
+            prefix={<SearchOutlined />}
+            placeholder="ค้นหาเครื่องหรือรหัส Alarm"
             value={filterMachine}
             onChange={(e) => setFilterMachine(e.target.value)}
-            className="w-full rounded-md border border-slate-300 px-3 py-2"
-            placeholder="Machine or Alarm Code"
+          />
+          <Select
+            allowClear
+            placeholder="กรองสถานะ"
+            value={filterStatus || undefined}
+            onChange={(v) => setFilterStatus(v || "")}
+            options={ALARM_STATUSES.map((status) => ({
+              value: status,
+              label: WORK_STATUS_LABELS[status],
+            }))}
           />
         </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium">Filter Status</label>
-          <select
-            value={filterStatus}
-            onChange={(e) => setFilterStatus(e.target.value)}
-            className="w-full rounded-md border border-slate-300 px-3 py-2"
-          >
-            <option value="">All</option>
-            {ALARM_STATUSES.map((status) => (
-              <option key={status} value={status}>
-                {status}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
+      </Card>
 
-      <form
-        onSubmit={onSubmit}
-        className="space-y-3 rounded-xl border border-slate-200 bg-white p-4"
+      <Card className="ui-card" title={`รายการ Alarm (${filtered.length})`}>
+        <Table
+          rowKey="id"
+          loading={loading}
+          columns={columns}
+          dataSource={filtered}
+          pagination={{ pageSize: 8, showSizeChanger: false }}
+          scroll={{ x: true }}
+          locale={{ emptyText: "ยังไม่มีรายการ Alarm" }}
+        />
+      </Card>
+
+      <Modal
+        centered
+        title={editingId ? "แก้ไข Alarm" : "เพิ่ม Alarm ใหม่"}
+        open={modalOpen}
+        onCancel={closeModal}
+        onOk={onSubmit}
+        okText={editingId ? "บันทึก" : "เพิ่ม Alarm"}
+        cancelText="ยกเลิก"
+        confirmLoading={saving}
+        destroyOnHidden
+        width={680}
       >
-        <h3 className="font-semibold">
-          {editingId ? "Edit Alarm" : "Add Alarm"}
-        </h3>
+        {error && (
+          <Alert
+            type="error"
+            showIcon
+            message={error}
+            style={{ marginBottom: 16 }}
+          />
+        )}
         <div className="grid gap-3 sm:grid-cols-2">
-          <select
-            value={form.machine_uuid}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, machine_uuid: e.target.value }))
-            }
-            className="rounded-md border border-slate-300 px-3 py-2"
+          <Form.Item label="เครื่องจักร" required style={{ marginBottom: 0 }}>
+            <Select
+              showSearch
+              optionFilterProp="label"
+              placeholder="เลือกเครื่อง"
+              value={form.machine_uuid || undefined}
+              onChange={(machine_uuid) =>
+                setForm((f) => ({ ...f, machine_uuid }))
+              }
+              options={machines.map((m) => ({
+                value: m.id,
+                label: `${m.machine_id} — ${m.machine_name}`,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item label="รหัส Alarm" required style={{ marginBottom: 0 }}>
+            <Input
+              value={form.alarm_code}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, alarm_code: e.target.value }))
+              }
+              placeholder="เช่น E-102"
+            />
+          </Form.Item>
+          <Form.Item
+            label="รายละเอียด"
+            required
+            style={{ marginBottom: 0 }}
+            className="sm:col-span-2"
           >
-            <option value="">Select Machine *</option>
-            {machines.map((machine) => (
-              <option key={machine.id} value={machine.id}>
-                {machine.machine_id} — {machine.machine_name}
-              </option>
-            ))}
-          </select>
-          <input
-            value={form.alarm_code}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, alarm_code: e.target.value }))
-            }
-            className="rounded-md border border-slate-300 px-3 py-2"
-            placeholder="Alarm Code *"
-          />
-          <input
-            value={form.alarm_description}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, alarm_description: e.target.value }))
-            }
-            className="rounded-md border border-slate-300 px-3 py-2 sm:col-span-2"
-            placeholder="Alarm Description *"
-          />
-          <input
-            value={form.cause}
-            onChange={(e) => setForm((f) => ({ ...f, cause: e.target.value }))}
-            className="rounded-md border border-slate-300 px-3 py-2"
-            placeholder="Cause"
-          />
-          <input
-            type="datetime-local"
-            value={form.occurred_at}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, occurred_at: e.target.value }))
-            }
-            className="rounded-md border border-slate-300 px-3 py-2"
-          />
-          <select
-            value={form.status}
-            onChange={(e) =>
-              setForm((f) => ({
-                ...f,
-                status: e.target.value as AlarmStatus,
-              }))
-            }
-            className="rounded-md border border-slate-300 px-3 py-2"
-          >
-            {ALARM_STATUSES.map((status) => (
-              <option key={status} value={status}>
-                {status}
-              </option>
-            ))}
-          </select>
+            <Input
+              value={form.alarm_description}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, alarm_description: e.target.value }))
+              }
+              placeholder="อธิบายอาการที่พบ"
+            />
+          </Form.Item>
+          <Form.Item label="สาเหตุ" style={{ marginBottom: 0 }}>
+            <Input
+              value={form.cause}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, cause: e.target.value }))
+              }
+              placeholder="สาเหตุ (ถ้าทราบ)"
+            />
+          </Form.Item>
+          <Form.Item label="วันเวลาเกิด" style={{ marginBottom: 0 }}>
+            <DateTimeField
+              value={form.occurred_at}
+              onChange={(occurred_at) =>
+                setForm((f) => ({ ...f, occurred_at }))
+              }
+            />
+          </Form.Item>
+          <Form.Item label="สถานะ" style={{ marginBottom: 0 }}>
+            <Select
+              value={form.status}
+              onChange={(status) => setForm((f) => ({ ...f, status }))}
+              options={ALARM_STATUSES.map((status) => ({
+                value: status,
+                label: WORK_STATUS_LABELS[status],
+              }))}
+            />
+          </Form.Item>
         </div>
-        <div className="flex gap-2">
-          <button
-            type="submit"
-            className="rounded-md bg-slate-900 px-4 py-2 text-white hover:bg-slate-800"
-          >
-            {editingId ? "Update" : "Create"}
-          </button>
-          {editingId && (
-            <button
-              type="button"
-              onClick={resetForm}
-              className="rounded-md border border-slate-300 px-4 py-2"
-            >
-              Cancel
-            </button>
-          )}
-        </div>
-      </form>
-
-      {error && (
-        <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
-          {error}
-        </p>
-      )}
-      {message && (
-        <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          {message}
-        </p>
-      )}
-
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-        <table className="min-w-full text-left text-sm">
-          <thead className="bg-slate-50 text-slate-600">
-            <tr>
-              <th className="px-3 py-2">Machine</th>
-              <th className="px-3 py-2">Code</th>
-              <th className="px-3 py-2">Description</th>
-              <th className="px-3 py-2">Date/Time</th>
-              <th className="px-3 py-2">Status</th>
-              <th className="px-3 py-2">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr>
-                <td className="px-3 py-4 text-slate-500" colSpan={6}>
-                  Loading...
-                </td>
-              </tr>
-            ) : filtered.length === 0 ? (
-              <tr>
-                <td className="px-3 py-4 text-slate-500" colSpan={6}>
-                  No alarms found
-                </td>
-              </tr>
-            ) : (
-              filtered.map((alarm) => (
-                <tr key={alarm.id} className="border-t border-slate-100">
-                  <td className="px-3 py-2">
-                    {alarm.machines?.machine_id || "-"}{" "}
-                    {alarm.machines?.machine_name
-                      ? `(${alarm.machines.machine_name})`
-                      : ""}
-                  </td>
-                  <td className="px-3 py-2 font-medium">{alarm.alarm_code}</td>
-                  <td className="px-3 py-2">{alarm.alarm_description}</td>
-                  <td className="px-3 py-2">
-                    {new Date(alarm.occurred_at).toLocaleString()}
-                  </td>
-                  <td className="px-3 py-2">
-                    <StatusBadge status={alarm.status} />
-                  </td>
-                  <td className="px-3 py-2">
-                    <button
-                      type="button"
-                      onClick={() => startEdit(alarm)}
-                      className="text-slate-700 underline"
-                    >
-                      Edit
-                    </button>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+      </Modal>
     </div>
   );
 }

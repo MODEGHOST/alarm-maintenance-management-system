@@ -2,26 +2,28 @@
 
 ## Tools used
 
-- Cursor AI (Composer) for analysis, coding, and documentation
-- Allowed per assignment: AI may assist in all development steps
+- Cursor AI (Composer) สำหรับวิเคราะห์โจทย์ พัฒนาโค้ด และเอกสาร
+- ตามโจทย์อนุญาตให้ใช้ AI ได้ทุกขั้นตอน
 
-## What AI helped with
+## สิ่งที่ AI ช่วย
 
-1. Requirement analysis from the assignment PDF
-2. Database schema design (`profiles`, `machines`, `alarms`, `maintenance_records`)
-3. Next.js + Tailwind UI for Login, Dashboard, Machines, Alarms, Maintenance
-4. Supabase Auth + role-based access (Admin / Technician)
-5. Input validation and search/filter
-6. GitHub Actions CI workflow
-7. README and setup instructions
+1. วิเคราะห์ requirement จากไฟล์ PDF
+2. ออกแบบ Database Schema และ RLS ตาม Role
+3. พัฒนา Next.js + Ant Design UI (Login/Register, Sidebar, Dashboard, Modal CRUD)
+4. Authentication + Role-Based Access (Admin / Technician)
+5. Validation (ห้ามว่าง, Machine ID ไม่ซ้ำ, รูปแบบ/ความยาว, ข้อความแจ้งเตือน)
+6. Workflow Alarm → เปิดงานซ่อม → ปิดกลับปกติ
+7. Notification (Badge + แถบแจ้งเตือน)
+8. GitHub Actions CI และ README
 
-## What was verified manually (student responsibility)
+## สิ่งที่ผู้เรียนตรวจเอง
 
-- Functional correctness of CRUD and roles
-- Secrets not committed (only `NEXT_PUBLIC_*` keys in env)
-- CI pass/fail on GitHub
-- Live deployment on Vercel after connecting Supabase
+- ความถูกต้องของ CRUD และสิทธิ์ Role
+- ไม่ commit secret / Service Role Key
+- ทดสอบ Login ทั้ง Admin และ Technician
+- Deploy Vercel และแนบ Screenshot ตอนส่งงาน
 
-## Note
+## หมายเหตุ
 
-Bonus features were intentionally skipped to keep the submission simple and complete for the main 100-point requirements.
+ระบบหลักครบตาม requirement 100 คะแนน  
+Bonus ไม่ได้ทำครบทุกข้อ แต่มีฟีเจอร์เสริมบางส่วน เช่น Register, Notification, Sidebar, Workflow เชื่อม Alarm-Maintenance

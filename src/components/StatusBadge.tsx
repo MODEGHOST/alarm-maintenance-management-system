@@ -1,3 +1,5 @@
+import { machineStatusLabel, workStatusLabel } from "@/lib/labels";
+
 const machineColors: Record<string, string> = {
   Running: "bg-emerald-100 text-emerald-800",
   Stop: "bg-slate-200 text-slate-700",
@@ -19,11 +21,14 @@ export function StatusBadge({
   kind?: "machine" | "work";
 }) {
   const map = kind === "machine" ? machineColors : workColors;
+  const label =
+    kind === "machine" ? machineStatusLabel(status) : workStatusLabel(status);
+
   return (
     <span
       className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${map[status] || "bg-slate-100 text-slate-700"}`}
     >
-      {status}
+      {label}
     </span>
   );
 }

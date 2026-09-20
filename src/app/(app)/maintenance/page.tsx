@@ -1,7 +1,31 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { StatusBadge } from "@/components/StatusBadge";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Alert,
+  Button,
+  Card,
+  Form,
+  Input,
+  Modal,
+  Popconfirm,
+  Select,
+  Space,
+  Table,
+  Tag,
+  message,
+} from "antd";
+import {
+  CheckCircleOutlined,
+  EditOutlined,
+  PlusOutlined,
+  SearchOutlined,
+} from "@ant-design/icons";
+import { DateTimeField } from "@/components/DateTimeField";
+import { PageIntro } from "@/components/PageIntro";
+import { useAlertCounts } from "@/components/AlertProvider";
+import { canManageMaintenance } from "@/lib/rbac";
+import { WORK_STATUS_LABELS } from "@/lib/labels";
 import { createClient } from "@/lib/supabase/client";
 import type {
   Machine,
@@ -11,6 +35,7 @@ import type {
 } from "@/lib/types";
 import { MAINTENANCE_STATUSES } from "@/lib/types";
 import { validateMaintenanceForm } from "@/lib/validations";
+import { syncMachineAfterMaintenanceChange } from "@/lib/workflow";
 
 const emptyForm = {
   machine_uuid: "",
@@ -20,17 +45,25 @@ const emptyForm = {
   scheduled_at: "",
 };
 
+const statusColor: Record<MaintenanceStatus, string> = {
+  Open: "error",
+  "In Progress": "warning",
+  Closed: "success",
+};
+
 export default function MaintenancePage() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [machines, setMachines] = useState<Machine[]>([]);
   const [records, setRecords] = useState<MaintenanceRecord[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
   const [filterMachine, setFilterMachine] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const { refresh: refreshAlerts } = useAlertCounts();
 
   async function load() {
     const supabase = createClient();
@@ -51,7 +84,9 @@ export default function MaintenancePage() {
       supabase.from("machines").select("*").order("machine_id"),
       supabase
         .from("maintenance_records")
-        .select("*, machines(machine_id, machine_name), profiles(full_name, email)")
+        .select(
+          "*, machines(machine_id, machine_name), profiles!technician_id(full_name, email)",
+        )
         .order("created_at", { ascending: false }),
     ]);
 
@@ -66,7 +101,7 @@ export default function MaintenancePage() {
     load()
       .catch((err) =>
         setError(
-          err instanceof Error ? err.message : "Failed to load maintenance",
+          err instanceof Error ? err.message : "โหลดงานบำรุงรักษาไม่สำเร็จ",
         ),
       )
       .finally(() => setLoading(false));
@@ -84,37 +119,49 @@ export default function MaintenancePage() {
     });
   }, [records, filterMachine, filterStatus]);
 
-  function startEdit(record: MaintenanceRecord) {
+  function openCreate() {
+    setEditingId(null);
+    setForm(emptyForm);
+    setError(null);
+    setModalOpen(true);
+  }
+
+  function openEdit(record: MaintenanceRecord) {
     setEditingId(record.id);
     setForm({
       machine_uuid: record.machine_uuid,
       title: record.title,
       description: record.description || "",
       status: record.status,
-      scheduled_at: record.scheduled_at
-        ? new Date(record.scheduled_at).toISOString().slice(0, 16)
-        : "",
+      scheduled_at: record.scheduled_at || "",
     });
     setError(null);
-    setMessage(null);
+    setModalOpen(true);
   }
 
-  function resetForm() {
+  function closeModal() {
+    setModalOpen(false);
     setEditingId(null);
     setForm(emptyForm);
   }
 
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault();
+  async function onSubmit() {
     setError(null);
-    setMessage(null);
-
-    const validationError = validateMaintenanceForm(form);
+    if (!canManageMaintenance(profile)) {
+      setError("คุณไม่มีสิทธิ์จัดการงานบำรุงรักษา");
+      return;
+    }
+    const validationError = validateMaintenanceForm({
+      machine_uuid: form.machine_uuid,
+      title: form.title,
+      description: form.description,
+    });
     if (validationError) {
       setError(validationError);
       return;
     }
 
+    setSaving(true);
     const supabase = createClient();
     const payload = {
       machine_uuid: form.machine_uuid,
@@ -124,226 +171,291 @@ export default function MaintenancePage() {
       scheduled_at: form.scheduled_at
         ? new Date(form.scheduled_at).toISOString()
         : null,
-      technician_id: profile?.id || null,
-      completed_at:
-        form.status === "Closed" ? new Date().toISOString() : null,
+      completed_at: form.status === "Closed" ? new Date().toISOString() : null,
       updated_at: new Date().toISOString(),
     };
 
-    if (editingId) {
-      const { error: updateError } = await supabase
-        .from("maintenance_records")
-        .update(payload)
-        .eq("id", editingId);
-      if (updateError) {
-        setError(updateError.message);
-        return;
+    try {
+      if (editingId) {
+        const { error: updateError } = await supabase
+          .from("maintenance_records")
+          .update(payload)
+          .eq("id", editingId);
+        if (updateError) {
+          setError(updateError.message);
+          return;
+        }
+        message.success("อัปเดตงานบำรุงรักษาแล้ว");
+      } else {
+        const { error: insertError } = await supabase
+          .from("maintenance_records")
+          .insert({
+            ...payload,
+            technician_id: profile?.id || null,
+          });
+        if (insertError) {
+          setError(insertError.message);
+          return;
+        }
+        message.success("เพิ่มงานบำรุงรักษาแล้ว");
       }
-      setMessage("Maintenance updated");
-    } else {
-      const { error: insertError } = await supabase
-        .from("maintenance_records")
-        .insert(payload);
-      if (insertError) {
-        setError(insertError.message);
-        return;
-      }
-      setMessage("Maintenance created");
-    }
 
-    resetForm();
-    await load();
+      await syncMachineAfterMaintenanceChange(form.machine_uuid, form.status);
+
+      // If closed, also close open alarms on same machine
+      if (form.status === "Closed") {
+        await supabase
+          .from("alarms")
+          .update({
+            status: "Closed",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("machine_uuid", form.machine_uuid)
+          .neq("status", "Closed");
+        await syncMachineAfterMaintenanceChange(form.machine_uuid, "Closed");
+      }
+
+      closeModal();
+      await load();
+      await refreshAlerts();
+    } finally {
+      setSaving(false);
+    }
   }
 
+  async function completeJob(record: MaintenanceRecord) {
+    const supabase = createClient();
+    const { error: updateError } = await supabase
+      .from("maintenance_records")
+      .update({
+        status: "Closed",
+        completed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", record.id);
+
+    if (updateError) {
+      message.error(updateError.message);
+      return;
+    }
+
+    await supabase
+      .from("alarms")
+      .update({
+        status: "Closed",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("machine_uuid", record.machine_uuid)
+      .neq("status", "Closed");
+
+    await syncMachineAfterMaintenanceChange(record.machine_uuid, "Closed");
+    message.success("ปิดงานซ่อมแล้ว และพยายามคืนสถานะเครื่องให้ปกติ");
+    await load();
+    await refreshAlerts();
+  }
+
+  const columns = [
+    {
+      title: "เครื่องจักร",
+      key: "machine",
+      render: (_: unknown, record: MaintenanceRecord) =>
+        record.machines?.machine_id || "-",
+    },
+    {
+      title: "หัวข้อ",
+      dataIndex: "title",
+      key: "title",
+      render: (v: string) => <strong>{v}</strong>,
+    },
+    {
+      title: "ช่างเทคนิค",
+      key: "tech",
+      render: (_: unknown, record: MaintenanceRecord) =>
+        record.profiles?.full_name || record.profiles?.email || "-",
+    },
+    {
+      title: "สถานะ",
+      dataIndex: "status",
+      key: "status",
+      render: (status: MaintenanceStatus) => (
+        <Tag color={statusColor[status]}>{WORK_STATUS_LABELS[status]}</Tag>
+      ),
+    },
+    {
+      title: "กำหนดเวลา",
+      dataIndex: "scheduled_at",
+      key: "scheduled_at",
+      render: (v: string | null) =>
+        v ? new Date(v).toLocaleString("th-TH") : "-",
+    },
+    {
+      title: "จัดการ",
+      key: "actions",
+      width: 220,
+      render: (_: unknown, record: MaintenanceRecord) => (
+        <Space wrap size={0}>
+          <Button
+            type="link"
+            icon={<EditOutlined />}
+            onClick={() => openEdit(record)}
+          >
+            แก้ไข
+          </Button>
+          {record.status !== "Closed" && (
+            <Popconfirm
+              title="ปิดงานซ่อมและคืนเครื่องให้ปกติ?"
+              description="จะปิดงานนี้ และปิด Alarm ที่ค้างของเครื่องเดียวกัน"
+              okText="ปิดงาน"
+              cancelText="ยกเลิก"
+              onConfirm={() => completeJob(record)}
+            >
+              <Button type="link" icon={<CheckCircleOutlined />}>
+                ซ่อมเสร็จ
+              </Button>
+            </Popconfirm>
+          )}
+        </Space>
+      ),
+    },
+  ];
+
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold">Maintenance Records</h2>
-        <p className="text-sm text-slate-600">
-          Create, view, and update maintenance work
-        </p>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <PageIntro
+          eyebrow="Maintenance Record"
+          title="งานบำรุงรักษา"
+          description="ขั้นที่ 2: รับงานซ่อมจาก Alarm หรือเปิดงานเอง → ซ่อมเสร็จกด 'ซ่อมเสร็จ' เพื่อปิดงานและคืนเครื่องให้ปกติ"
+        />
+        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+          เปิดงานบำรุงรักษา
+        </Button>
       </div>
 
-      <div className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:grid-cols-2">
-        <div>
-          <label className="mb-1 block text-sm font-medium">
-            Search Machine / Title
-          </label>
-          <input
+      {error && !modalOpen && (
+        <Alert
+          type="error"
+          showIcon
+          message={error}
+          closable
+          onClose={() => setError(null)}
+        />
+      )}
+
+      <Card size="small" className="ui-card">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Input
+            allowClear
+            prefix={<SearchOutlined />}
+            placeholder="ค้นหาเครื่องหรือหัวข้องาน"
             value={filterMachine}
             onChange={(e) => setFilterMachine(e.target.value)}
-            className="w-full rounded-md border border-slate-300 px-3 py-2"
-            placeholder="Machine or Title"
+          />
+          <Select
+            allowClear
+            placeholder="กรองสถานะ"
+            value={filterStatus || undefined}
+            onChange={(v) => setFilterStatus(v || "")}
+            options={MAINTENANCE_STATUSES.map((status) => ({
+              value: status,
+              label: WORK_STATUS_LABELS[status],
+            }))}
           />
         </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium">Filter Status</label>
-          <select
-            value={filterStatus}
-            onChange={(e) => setFilterStatus(e.target.value)}
-            className="w-full rounded-md border border-slate-300 px-3 py-2"
-          >
-            <option value="">All</option>
-            {MAINTENANCE_STATUSES.map((status) => (
-              <option key={status} value={status}>
-                {status}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
+      </Card>
 
-      <form
-        onSubmit={onSubmit}
-        className="space-y-3 rounded-xl border border-slate-200 bg-white p-4"
+      <Card
+        className="ui-card"
+        title={`รายการงานบำรุงรักษา (${filtered.length})`}
       >
-        <h3 className="font-semibold">
-          {editingId ? "Edit Maintenance" : "Add Maintenance"}
-        </h3>
+        <Table
+          rowKey="id"
+          loading={loading}
+          columns={columns}
+          dataSource={filtered}
+          pagination={{ pageSize: 8, showSizeChanger: false }}
+          scroll={{ x: true }}
+          locale={{ emptyText: "ยังไม่มีงานบำรุงรักษา" }}
+        />
+      </Card>
+
+      <Modal
+        centered
+        title={editingId ? "แก้ไขงานบำรุงรักษา" : "เปิดงานบำรุงรักษาใหม่"}
+        open={modalOpen}
+        onCancel={closeModal}
+        onOk={onSubmit}
+        okText={editingId ? "บันทึก" : "เปิดงาน"}
+        cancelText="ยกเลิก"
+        confirmLoading={saving}
+        destroyOnHidden
+        width={680}
+      >
+        {error && (
+          <Alert
+            type="error"
+            showIcon
+            message={error}
+            style={{ marginBottom: 16 }}
+          />
+        )}
         <div className="grid gap-3 sm:grid-cols-2">
-          <select
-            value={form.machine_uuid}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, machine_uuid: e.target.value }))
-            }
-            className="rounded-md border border-slate-300 px-3 py-2"
+          <Form.Item label="เครื่องจักร" required style={{ marginBottom: 0 }}>
+            <Select
+              showSearch
+              optionFilterProp="label"
+              placeholder="เลือกเครื่อง"
+              value={form.machine_uuid || undefined}
+              onChange={(machine_uuid) =>
+                setForm((f) => ({ ...f, machine_uuid }))
+              }
+              options={machines.map((m) => ({
+                value: m.id,
+                label: `${m.machine_id} — ${m.machine_name}`,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item label="หัวข้องาน" required style={{ marginBottom: 0 }}>
+            <Input
+              value={form.title}
+              onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
+              placeholder="เช่น เปลี่ยนไส้กรอง"
+            />
+          </Form.Item>
+          <Form.Item
+            label="รายละเอียด"
+            style={{ marginBottom: 0 }}
+            className="sm:col-span-2"
           >
-            <option value="">Select Machine *</option>
-            {machines.map((machine) => (
-              <option key={machine.id} value={machine.id}>
-                {machine.machine_id} — {machine.machine_name}
-              </option>
-            ))}
-          </select>
-          <input
-            value={form.title}
-            onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
-            className="rounded-md border border-slate-300 px-3 py-2"
-            placeholder="Title *"
-          />
-          <input
-            value={form.description}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, description: e.target.value }))
-            }
-            className="rounded-md border border-slate-300 px-3 py-2 sm:col-span-2"
-            placeholder="Description"
-          />
-          <input
-            type="datetime-local"
-            value={form.scheduled_at}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, scheduled_at: e.target.value }))
-            }
-            className="rounded-md border border-slate-300 px-3 py-2"
-          />
-          <select
-            value={form.status}
-            onChange={(e) =>
-              setForm((f) => ({
-                ...f,
-                status: e.target.value as MaintenanceStatus,
-              }))
-            }
-            className="rounded-md border border-slate-300 px-3 py-2"
-          >
-            {MAINTENANCE_STATUSES.map((status) => (
-              <option key={status} value={status}>
-                {status}
-              </option>
-            ))}
-          </select>
+            <Input.TextArea
+              rows={2}
+              value={form.description}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, description: e.target.value }))
+              }
+              placeholder="รายละเอียดงาน"
+            />
+          </Form.Item>
+          <Form.Item label="กำหนดเวลา" style={{ marginBottom: 0 }}>
+            <DateTimeField
+              value={form.scheduled_at}
+              onChange={(scheduled_at) =>
+                setForm((f) => ({ ...f, scheduled_at }))
+              }
+            />
+          </Form.Item>
+          <Form.Item label="สถานะ" style={{ marginBottom: 0 }}>
+            <Select
+              value={form.status}
+              onChange={(status) => setForm((f) => ({ ...f, status }))}
+              options={MAINTENANCE_STATUSES.map((status) => ({
+                value: status,
+                label: WORK_STATUS_LABELS[status],
+              }))}
+            />
+          </Form.Item>
         </div>
-        <div className="flex gap-2">
-          <button
-            type="submit"
-            className="rounded-md bg-slate-900 px-4 py-2 text-white hover:bg-slate-800"
-          >
-            {editingId ? "Update" : "Create"}
-          </button>
-          {editingId && (
-            <button
-              type="button"
-              onClick={resetForm}
-              className="rounded-md border border-slate-300 px-4 py-2"
-            >
-              Cancel
-            </button>
-          )}
-        </div>
-      </form>
-
-      {error && (
-        <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
-          {error}
-        </p>
-      )}
-      {message && (
-        <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          {message}
-        </p>
-      )}
-
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-        <table className="min-w-full text-left text-sm">
-          <thead className="bg-slate-50 text-slate-600">
-            <tr>
-              <th className="px-3 py-2">Machine</th>
-              <th className="px-3 py-2">Title</th>
-              <th className="px-3 py-2">Technician</th>
-              <th className="px-3 py-2">Status</th>
-              <th className="px-3 py-2">Scheduled</th>
-              <th className="px-3 py-2">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr>
-                <td className="px-3 py-4 text-slate-500" colSpan={6}>
-                  Loading...
-                </td>
-              </tr>
-            ) : filtered.length === 0 ? (
-              <tr>
-                <td className="px-3 py-4 text-slate-500" colSpan={6}>
-                  No maintenance records found
-                </td>
-              </tr>
-            ) : (
-              filtered.map((record) => (
-                <tr key={record.id} className="border-t border-slate-100">
-                  <td className="px-3 py-2">
-                    {record.machines?.machine_id || "-"}
-                  </td>
-                  <td className="px-3 py-2 font-medium">{record.title}</td>
-                  <td className="px-3 py-2">
-                    {record.profiles?.full_name ||
-                      record.profiles?.email ||
-                      "-"}
-                  </td>
-                  <td className="px-3 py-2">
-                    <StatusBadge status={record.status} />
-                  </td>
-                  <td className="px-3 py-2">
-                    {record.scheduled_at
-                      ? new Date(record.scheduled_at).toLocaleString()
-                      : "-"}
-                  </td>
-                  <td className="px-3 py-2">
-                    <button
-                      type="button"
-                      onClick={() => startEdit(record)}
-                      className="text-slate-700 underline"
-                    >
-                      Edit
-                    </button>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+      </Modal>
     </div>
   );
 }

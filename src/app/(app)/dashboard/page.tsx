@@ -1,15 +1,23 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
+import { Alert, Button, Empty, Spin, Table, Tag } from "antd";
+import {
+  AlertOutlined,
+  CheckCircleOutlined,
+  ClusterOutlined,
+  PauseCircleOutlined,
+  ToolOutlined,
+  WarningOutlined,
+} from "@ant-design/icons";
 import { createClient } from "@/lib/supabase/client";
-import type { MachineStatus } from "@/lib/types";
-import { MACHINE_STATUSES } from "@/lib/types";
+import { MACHINE_STATUS_LABELS, WORK_STATUS_LABELS } from "@/lib/labels";
+import type { Alarm, Machine, MachineStatus, MaintenanceRecord } from "@/lib/types";
 
 type Stats = {
   totalMachines: number;
   byStatus: Record<MachineStatus, number>;
-  alarmCount: number;
-  maintenanceCount: number;
   openAlarms: number;
   openMaintenance: number;
 };
@@ -17,14 +25,16 @@ type Stats = {
 const emptyStats: Stats = {
   totalMachines: 0,
   byStatus: { Running: 0, Stop: 0, Alarm: 0, Maintenance: 0 },
-  alarmCount: 0,
-  maintenanceCount: 0,
   openAlarms: 0,
   openMaintenance: 0,
 };
 
 export default function DashboardPage() {
   const [stats, setStats] = useState<Stats>(emptyStats);
+  const [alarmMachines, setAlarmMachines] = useState<Machine[]>([]);
+  const [maintMachines, setMaintMachines] = useState<Machine[]>([]);
+  const [openAlarmRows, setOpenAlarmRows] = useState<Alarm[]>([]);
+  const [openMaintRows, setOpenMaintRows] = useState<MaintenanceRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -33,35 +43,48 @@ export default function DashboardPage() {
       try {
         const supabase = createClient();
         const [machinesRes, alarmsRes, maintenanceRes] = await Promise.all([
-          supabase.from("machines").select("status"),
-          supabase.from("alarms").select("status"),
-          supabase.from("maintenance_records").select("status"),
+          supabase.from("machines").select("*").order("machine_id"),
+          supabase
+            .from("alarms")
+            .select("*, machines(machine_id, machine_name)")
+            .neq("status", "Closed")
+            .order("occurred_at", { ascending: false }),
+          supabase
+            .from("maintenance_records")
+            .select(
+              "*, machines(machine_id, machine_name), profiles!technician_id(full_name, email)",
+            )
+            .neq("status", "Closed")
+            .order("created_at", { ascending: false }),
         ]);
 
         if (machinesRes.error) throw machinesRes.error;
         if (alarmsRes.error) throw alarmsRes.error;
         if (maintenanceRes.error) throw maintenanceRes.error;
 
+        const machines = (machinesRes.data || []) as Machine[];
         const byStatus = { ...emptyStats.byStatus };
-        for (const row of machinesRes.data || []) {
-          const status = row.status as MachineStatus;
-          if (status in byStatus) byStatus[status] += 1;
+        for (const row of machines) {
+          if (row.status in byStatus) byStatus[row.status] += 1;
         }
 
-        const alarms = alarmsRes.data || [];
-        const maintenance = maintenanceRes.data || [];
+        const openAlarms = (alarmsRes.data || []) as Alarm[];
+        const openMaint = (maintenanceRes.data || []) as MaintenanceRecord[];
 
         setStats({
-          totalMachines: machinesRes.data?.length || 0,
+          totalMachines: machines.length,
           byStatus,
-          alarmCount: alarms.length,
-          maintenanceCount: maintenance.length,
-          openAlarms: alarms.filter((a) => a.status !== "Closed").length,
-          openMaintenance: maintenance.filter((m) => m.status !== "Closed")
-            .length,
+          openAlarms: openAlarms.length,
+          openMaintenance: openMaint.length,
         });
+        setAlarmMachines(machines.filter((m) => m.status === "Alarm"));
+        setMaintMachines(machines.filter((m) => m.status === "Maintenance"));
+        setOpenAlarmRows(openAlarms);
+        setOpenMaintRows(openMaint);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load dashboard");
+        setError(
+          err instanceof Error ? err.message : "โหลดแดชบอร์ดไม่สำเร็จ",
+        );
       } finally {
         setLoading(false);
       }
@@ -70,49 +93,271 @@ export default function DashboardPage() {
     load();
   }, []);
 
-  const cards = [
-    { label: "Total Machines", value: stats.totalMachines },
-    ...MACHINE_STATUSES.map((status) => ({
-      label: status,
-      value: stats.byStatus[status],
-    })),
-    { label: "Total Alarms", value: stats.alarmCount },
-    { label: "Open Alarms", value: stats.openAlarms },
-    { label: "Total Maintenance", value: stats.maintenanceCount },
-    { label: "Open Maintenance", value: stats.openMaintenance },
-  ];
+  const runningPct =
+    stats.totalMachines === 0
+      ? 0
+      : Math.round((stats.byStatus.Running / stats.totalMachines) * 100);
+
+  const healthTone =
+    stats.openAlarms > 0 || stats.byStatus.Alarm > 0
+      ? "danger"
+      : stats.byStatus.Maintenance > 0 || stats.openMaintenance > 0
+        ? "warn"
+        : "ok";
+
+  const healthText =
+    healthTone === "danger"
+      ? "มีเครื่องติด Alarm ต้องดูด่วน"
+      : healthTone === "warn"
+        ? "มีเครื่องอยู่ระหว่างบำรุงรักษา"
+        : "สายการผลิตโดยรวมปกติ";
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold">Dashboard</h2>
-        <p className="text-sm text-slate-600">
-          Summary of machines, alarms, and maintenance work
-        </p>
-      </div>
+    <div className="dash">
+      <section className={`dash-hero tone-${healthTone}`}>
+        <div>
+          <p className="dash-kicker">ศูนย์ควบคุมโรงงาน</p>
+          <h2>เครื่องไหนมีปัญหา ดูได้ทันทีที่นี่</h2>
+          <p>
+            ด้านล่างแสดงชื่อเครื่องที่ติด Alarm และเครื่องที่กำลังบำรุงรักษา
+            พร้อมรายการงานที่ยังไม่ปิด
+          </p>
+        </div>
+        <div className="dash-hero-status">
+          <span className="dash-health-label">สถานะภาพรวม</span>
+          <strong>{healthText}</strong>
+          <small>
+            ทำงาน {stats.byStatus.Running}/{stats.totalMachines} · Alarm เปิด{" "}
+            {stats.openAlarms} · งานซ่อมเปิด {stats.openMaintenance}
+          </small>
+        </div>
+      </section>
 
       {error && (
-        <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
-          {error}
-        </p>
+        <Alert type="error" showIcon message={error} style={{ marginBottom: 16 }} />
       )}
 
       {loading ? (
-        <p className="text-sm text-slate-500">Loading dashboard...</p>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {cards.map((card) => (
-            <div
-              key={card.label}
-              className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
-            >
-              <p className="text-sm text-slate-500">{card.label}</p>
-              <p className="mt-2 text-3xl font-bold text-slate-900">
-                {card.value}
-              </p>
-            </div>
-          ))}
+        <div className="dash-loading">
+          <Spin tip="กำลังโหลดข้อมูลโรงงาน..." />
         </div>
+      ) : (
+        <>
+          <section className="dash-attention">
+            <article className="attention-panel attention-alarm">
+              <div className="attention-head">
+                <div>
+                  <WarningOutlined />
+                  <h3>เครื่องที่ติด Alarm ตอนนี้</h3>
+                </div>
+                <Tag color="error">{alarmMachines.length} เครื่อง</Tag>
+              </div>
+              {alarmMachines.length === 0 ? (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description="ไม่มีเครื่องสถานะ Alarm"
+                />
+              ) : (
+                <ul className="attention-list">
+                  {alarmMachines.map((m) => (
+                    <li key={m.id}>
+                      <div>
+                        <strong>{m.machine_id}</strong>
+                        <span>
+                          {m.machine_name} · {m.location}
+                        </span>
+                      </div>
+                      <Tag color="error">{MACHINE_STATUS_LABELS.Alarm}</Tag>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <Link href="/alarms">
+                <Button type="primary" danger block>
+                  ไปจัดการ Alarm
+                </Button>
+              </Link>
+            </article>
+
+            <article className="attention-panel attention-maint">
+              <div className="attention-head">
+                <div>
+                  <ToolOutlined />
+                  <h3>เครื่องที่กำลังบำรุงรักษา</h3>
+                </div>
+                <Tag color="warning">{maintMachines.length} เครื่อง</Tag>
+              </div>
+              {maintMachines.length === 0 ? (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description="ไม่มีเครื่องสถานะซ่อมบำรุง"
+                />
+              ) : (
+                <ul className="attention-list">
+                  {maintMachines.map((m) => (
+                    <li key={m.id}>
+                      <div>
+                        <strong>{m.machine_id}</strong>
+                        <span>
+                          {m.machine_name} · {m.location}
+                        </span>
+                      </div>
+                      <Tag color="warning">
+                        {MACHINE_STATUS_LABELS.Maintenance}
+                      </Tag>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <Link href="/maintenance">
+                <Button type="primary" block>
+                  ไปงานบำรุงรักษา
+                </Button>
+              </Link>
+            </article>
+          </section>
+
+          <section className="dash-section">
+            <div className="dash-section-head">
+              <h3>รายการ Alarm ที่ยังเปิด (ระบุเครื่อง)</h3>
+              <Link href="/alarms">
+                <Button type="link">ดูทั้งหมด</Button>
+              </Link>
+            </div>
+            <Table
+              rowKey="id"
+              size="middle"
+              pagination={false}
+              locale={{ emptyText: "ไม่มี Alarm ค้าง" }}
+              dataSource={openAlarmRows.slice(0, 5)}
+              columns={[
+                {
+                  title: "เครื่อง",
+                  key: "machine",
+                  render: (_: unknown, row: Alarm) => (
+                    <strong>
+                      {row.machines?.machine_id || "-"}{" "}
+                      {row.machines?.machine_name
+                        ? `(${row.machines.machine_name})`
+                        : ""}
+                    </strong>
+                  ),
+                },
+                { title: "รหัส", dataIndex: "alarm_code" },
+                {
+                  title: "รายละเอียด",
+                  dataIndex: "alarm_description",
+                  ellipsis: true,
+                },
+                {
+                  title: "สถานะ",
+                  dataIndex: "status",
+                  render: (s: Alarm["status"]) => (
+                    <Tag color={s === "Open" ? "error" : "warning"}>
+                      {WORK_STATUS_LABELS[s]}
+                    </Tag>
+                  ),
+                },
+              ]}
+            />
+          </section>
+
+          <section className="dash-section">
+            <div className="dash-section-head">
+              <h3>งานบำรุงรักษาที่ยังเปิด (ระบุเครื่อง)</h3>
+              <Link href="/maintenance">
+                <Button type="link">ดูทั้งหมด</Button>
+              </Link>
+            </div>
+            <Table
+              rowKey="id"
+              size="middle"
+              pagination={false}
+              locale={{ emptyText: "ไม่มีงานบำรุงรักษาค้าง" }}
+              dataSource={openMaintRows.slice(0, 5)}
+              columns={[
+                {
+                  title: "เครื่อง",
+                  key: "machine",
+                  render: (_: unknown, row: MaintenanceRecord) => (
+                    <strong>{row.machines?.machine_id || "-"}</strong>
+                  ),
+                },
+                { title: "หัวข้อ", dataIndex: "title" },
+                {
+                  title: "ช่าง",
+                  key: "tech",
+                  render: (_: unknown, row: MaintenanceRecord) =>
+                    row.profiles?.full_name || row.profiles?.email || "-",
+                },
+                {
+                  title: "สถานะ",
+                  dataIndex: "status",
+                  render: (s: MaintenanceRecord["status"]) => (
+                    <Tag color={s === "Open" ? "error" : "warning"}>
+                      {WORK_STATUS_LABELS[s]}
+                    </Tag>
+                  ),
+                },
+              ]}
+            />
+          </section>
+
+          <section className="dash-section">
+            <div className="dash-section-head">
+              <h3>สรุปสถานะเครื่องทั้งหมด</h3>
+              <Link href="/machines">
+                <Button type="link">ไปหน้าเครื่องจักร</Button>
+              </Link>
+            </div>
+            <div className="dash-metrics">
+              <article className="metric metric-total">
+                <ClusterOutlined className="metric-icon" />
+                <div>
+                  <p>เครื่องทั้งหมด</p>
+                  <strong>{stats.totalMachines}</strong>
+                </div>
+              </article>
+              <article className="metric metric-run">
+                <CheckCircleOutlined className="metric-icon" />
+                <div>
+                  <p>กำลังทำงาน</p>
+                  <strong>{stats.byStatus.Running}</strong>
+                </div>
+              </article>
+              <article className="metric metric-stop">
+                <PauseCircleOutlined className="metric-icon" />
+                <div>
+                  <p>หยุด</p>
+                  <strong>{stats.byStatus.Stop}</strong>
+                </div>
+              </article>
+              <article className="metric metric-alarm">
+                <AlertOutlined className="metric-icon" />
+                <div>
+                  <p>มี Alarm</p>
+                  <strong>{stats.byStatus.Alarm}</strong>
+                </div>
+              </article>
+              <article className="metric metric-maint">
+                <ToolOutlined className="metric-icon" />
+                <div>
+                  <p>ซ่อมบำรุง</p>
+                  <strong>{stats.byStatus.Maintenance}</strong>
+                </div>
+              </article>
+            </div>
+            <div className="dash-progress">
+              <div className="dash-progress-label">
+                <span>สัดส่วนเครื่องที่ยังทำงาน</span>
+                <strong>{runningPct}%</strong>
+              </div>
+              <div className="dash-bar">
+                <span style={{ width: `${runningPct}%` }} />
+              </div>
+            </div>
+          </section>
+        </>
       )}
     </div>
   );

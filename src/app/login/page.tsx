@@ -1,30 +1,23 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import Link from "next/link";
+import { Alert, Button, Form, Input, Typography } from "antd";
+import { LockOutlined, MailOutlined } from "@ant-design/icons";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { hasSupabaseConfig } from "@/lib/config";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault();
+  async function onFinish(values: { email: string; password: string }) {
     setError(null);
 
-    if (!email.trim() || !password.trim()) {
-      setError("Email and password are required");
-      return;
-    }
-
     if (!hasSupabaseConfig()) {
-      setError(
-        "Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to .env.local",
-      );
+      setError("Supabase ยังไม่ได้ตั้งค่า — ใส่ค่าใน .env.local ก่อนใช้งาน");
       return;
     }
 
@@ -32,8 +25,8 @@ export default function LoginPage() {
     try {
       const supabase = createClient();
       const { error: signInError } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
+        email: values.email.trim(),
+        password: values.password,
       });
 
       if (signInError) {
@@ -51,56 +44,103 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4">
-      <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-          Programming in Automation Systems
-        </p>
-        <h1 className="mt-1 text-2xl font-bold text-slate-900">
-          Alarm & Maintenance Management
-        </h1>
-        <p className="mt-2 text-sm text-slate-600">
-          Sign in with Admin or Technician account
-        </p>
+    <div className="auth-screen">
+      <div className="auth-grid" aria-hidden />
+      <div className="auth-glow" aria-hidden />
 
-        <form onSubmit={onSubmit} className="mt-6 space-y-4">
-          <div>
-            <label className="mb-1 block text-sm font-medium">Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-              placeholder="admin@example.com"
-              autoComplete="email"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium">Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
-              placeholder="••••••••"
-              autoComplete="current-password"
-            />
-          </div>
+      <div className="auth-shell auth-enter">
+        <aside className="auth-brand">
+          <p className="auth-eyebrow">Programming in Automation Systems</p>
+          <h1 className="auth-title">
+            Alarm &amp;
+            <br />
+            Maintenance
+          </h1>
+          <p className="auth-lead">
+            ระบบติดตาม Alarm และงานบำรุงรักษาเครื่องจักรในโรงงาน
+          </p>
+          <ul className="auth-points">
+            <li>ทะเบียนเครื่องจักร</li>
+            <li>ติดตาม Alarm</li>
+            <li>บันทึกงานบำรุงรักษา</li>
+          </ul>
+        </aside>
 
-          {error && (
-            <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
-              {error}
-            </p>
+        <section className="auth-panel">
+          <Typography.Title level={3} style={{ marginBottom: 4 }}>
+            เข้าสู่ระบบ
+          </Typography.Title>
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 24 }}>
+            ใช้บัญชี Admin หรือ Technician
+          </Typography.Paragraph>
+
+          {!hasSupabaseConfig() && (
+            <Alert
+              type="warning"
+              showIcon
+              message="ยังไม่ได้ตั้งค่า Supabase"
+              description="สร้างไฟล์ .env.local จาก .env.example แล้วรัน schema.sql"
+              style={{ marginBottom: 16 }}
+            />
           )}
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-md bg-slate-900 px-4 py-2.5 font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+          {error && (
+            <Alert
+              type="error"
+              showIcon
+              message={error}
+              style={{ marginBottom: 16 }}
+            />
+          )}
+
+          <Form
+            layout="vertical"
+            size="large"
+            onFinish={onFinish}
+            requiredMark={false}
           >
-            {loading ? "Signing in..." : "Login"}
-          </button>
-        </form>
+            <Form.Item
+              label="Email"
+              name="email"
+              rules={[
+                { required: true, message: "กรุณากรอกอีเมล" },
+                { type: "email", message: "รูปแบบอีเมลไม่ถูกต้อง" },
+              ]}
+            >
+              <Input
+                prefix={<MailOutlined />}
+                placeholder="admin@test.com"
+                autoComplete="email"
+              />
+            </Form.Item>
+
+            <Form.Item
+              label="Password"
+              name="password"
+              rules={[{ required: true, message: "กรุณากรอกรหัสผ่าน" }]}
+            >
+              <Input.Password
+                prefix={<LockOutlined />}
+                placeholder="••••••••"
+                autoComplete="current-password"
+              />
+            </Form.Item>
+
+            <Button
+              type="primary"
+              htmlType="submit"
+              loading={loading}
+              block
+              className="auth-submit"
+            >
+              เข้าสู่ระบบ
+            </Button>
+          </Form>
+
+          <p className="auth-footer">
+            ยังไม่มีบัญชี? <Link href="/register">สมัครใช้งาน</Link>
+          </p>
+        </section>
       </div>
     </div>
   );

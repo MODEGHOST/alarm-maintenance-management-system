@@ -78,7 +78,14 @@ $$;
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
-  for each row execute procedure public.handle_new_user();
+  for each row execute function public.handle_new_user();
+
+-- Allow authenticated users to insert their own profile (fallback from app)
+drop policy if exists "Users can insert own profile" on public.profiles;
+create policy "Users can insert own profile"
+  on public.profiles for insert
+  to authenticated
+  with check (auth.uid() = id);
 
 -- Helper: current user role
 create or replace function public.current_user_role()
