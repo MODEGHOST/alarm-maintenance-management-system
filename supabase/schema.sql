@@ -76,20 +76,30 @@ create index if not exists idx_machines_status on public.machines (status);
 create index if not exists idx_audit_created on public.audit_logs (created_at desc);
 create index if not exists idx_profiles_role on public.profiles (role);
 
--- Auto-create profile on signup
+-- Auto-create profile on signup (ห้ามยกระดับเป็น admin จาก metadata)
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  requested_role text;
+  safe_role text;
 begin
+  requested_role := lower(coalesce(new.raw_user_meta_data->>'role', 'technician'));
+  if requested_role = 'viewer' then
+    safe_role := 'viewer';
+  else
+    safe_role := 'technician';
+  end if;
+
   insert into public.profiles (id, email, full_name, role)
   values (
     new.id,
     new.email,
     coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1)),
-    coalesce(new.raw_user_meta_data->>'role', 'technician')
+    safe_role
   );
   return new;
 end;
@@ -105,7 +115,10 @@ drop policy if exists "Users can insert own profile" on public.profiles;
 create policy "Users can insert own profile"
   on public.profiles for insert
   to authenticated
-  with check (auth.uid() = id);
+  with check (
+    auth.uid() = id
+    and role in ('technician', 'viewer')
+  );
 
 -- Helper: current user role
 create or replace function public.current_user_role()
@@ -136,13 +149,21 @@ drop policy if exists "Users can update own profile" on public.profiles;
 create policy "Users can update own profile"
   on public.profiles for update
   to authenticated
-  using (auth.uid() = id or public.current_user_role() = 'admin');
+  using (auth.uid() = id or public.current_user_role() = 'admin')
+  with check (
+    public.current_user_role() = 'admin'
+    or (
+      auth.uid() = id
+      and role = (select p.role from public.profiles p where p.id = auth.uid())
+    )
+  );
 
 drop policy if exists "Admin can update any profile" on public.profiles;
 create policy "Admin can update any profile"
   on public.profiles for update
   to authenticated
-  using (public.current_user_role() = 'admin');
+  using (public.current_user_role() = 'admin')
+  with check (public.current_user_role() = 'admin');
 
 -- Machines policies
 drop policy if exists "Authenticated can read machines" on public.machines;

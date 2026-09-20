@@ -209,8 +209,10 @@ export default function AlarmsPage() {
       alarm_code: form.alarm_code.trim(),
       alarm_description: form.alarm_description.trim(),
       cause: form.cause.trim() || null,
-      // สร้างใหม่บังคับ Open — เปลี่ยนสถานะผ่านปุ่ม workflow เท่านั้น
-      status: (editingId ? form.status : "Open") as AlarmStatus,
+      // สถานะเปลี่ยนได้เฉพาะผ่านปุ่ม workflow — แก้ไขฟอร์มไม่แตะ status
+      status: (editingId
+        ? alarms.find((a) => a.id === editingId)?.status || form.status
+        : "Open") as AlarmStatus,
       occurred_at: form.occurred_at
         ? new Date(form.occurred_at).toISOString()
         : new Date().toISOString(),
@@ -567,12 +569,11 @@ export default function AlarmsPage() {
           <Form.Item
             label="สถานะ"
             style={{ marginBottom: 0 }}
-            extra="เปลี่ยนสถานะด้วยปุ่ม「เปิดงานซ่อม」หรือ「ซ่อมเสร็จ」ด้านนอก"
+            extra="เปลี่ยนสถานะด้วยปุ่ม workflow เท่านั้น (เปิดงานซ่อม / ซ่อมเสร็จ)"
           >
             <Select
               value={editingId ? form.status : "Open"}
-              disabled={!editingId}
-              onChange={(status) => setForm((f) => ({ ...f, status }))}
+              disabled
               options={ALARM_STATUSES.map((status) => ({
                 value: status,
                 label: WORK_STATUS_LABELS[status],
