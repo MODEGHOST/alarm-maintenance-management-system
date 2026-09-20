@@ -37,6 +37,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { Machine, MachineStatus, Profile } from "@/lib/types";
 import { MACHINE_STATUSES } from "@/lib/types";
 import { validateMachineForm } from "@/lib/validations";
+import { resolveMachineStatus } from "@/lib/workflow";
 
 const emptyForm = {
   machine_id: "",
@@ -231,7 +232,9 @@ export default function MachinesPage() {
           entityId: editingId,
           summary: `อัปเดตเครื่อง ${payload.machine_id}`,
         });
-        message.success("อัปเดตเครื่องจักรแล้ว");
+        // สถานะเครื่องคำนวณจาก Alarm/งานซ่อมค้างจริง
+        await resolveMachineStatus(editingId);
+        message.success("อัปเดตเครื่องจักรแล้ว (สถานะคำนวณจากงานค้างอัตโนมัติ)");
       } else {
         const { data, error: insertError } = await supabase
           .from("machines")
@@ -253,6 +256,7 @@ export default function MachinesPage() {
           entityId: data?.id,
           summary: `เพิ่มเครื่อง ${payload.machine_id}`,
         });
+        if (data?.id) await resolveMachineStatus(data.id);
         message.success("เพิ่มเครื่องจักรแล้ว");
       }
 

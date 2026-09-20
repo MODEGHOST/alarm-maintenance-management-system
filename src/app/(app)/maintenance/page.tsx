@@ -18,12 +18,15 @@ import {
 import {
   CheckCircleOutlined,
   EditOutlined,
+  PauseCircleOutlined,
+  PlayCircleOutlined,
   PlusOutlined,
 } from "@ant-design/icons";
 import { AdvancedFilterBar } from "@/components/AdvancedFilterBar";
 import { DateTimeField } from "@/components/DateTimeField";
 import { PageIntro } from "@/components/PageIntro";
 import { useAlertCounts } from "@/components/AlertProvider";
+import { WorkflowSteps } from "@/components/WorkflowSteps";
 import { writeAuditLog } from "@/lib/audit";
 import { exportExcelCsv } from "@/lib/export";
 import {
@@ -44,7 +47,13 @@ import type {
 import { MAINTENANCE_STATUSES } from "@/lib/types";
 import { formatDbError } from "@/lib/db-error";
 import { validateDateRange, validateMaintenanceForm } from "@/lib/validations";
-import { syncMachineAfterMaintenanceChange } from "@/lib/workflow";
+import {
+  canTransitionMaintenance,
+  completeMaintenanceJob,
+  markWaitingPart,
+  startMaintenanceWork,
+  syncMachineAfterMaintenanceChange,
+} from "@/lib/workflow";
 
 const emptyForm = {
   machine_uuid: "",
@@ -245,6 +254,19 @@ export default function MaintenancePage() {
       return;
     }
 
+    if (editingId) {
+      const current = records.find((r) => r.id === editingId);
+      if (
+        current &&
+        !canTransitionMaintenance(current.status, form.status)
+      ) {
+        setError(
+          `เปลี่ยนจาก「${WORK_STATUS_LABELS[current.status]}」ไป「${WORK_STATUS_LABELS[form.status]}」ไม่ได้ตามลำดับขั้น`,
+        );
+        return;
+      }
+    }
+
     setSaving(true);
     const supabase = createClient();
     const payload = {
@@ -298,7 +320,7 @@ export default function MaintenancePage() {
         message.success("เพิ่มงานบำรุงรักษาแล้ว");
       }
 
-      await syncMachineAfterMaintenanceChange(form.machine_uuid, form.status);
+      await syncMachineAfterMaintenanceChange(form.machine_uuid);
       closeModal();
       await load();
       await refreshAlerts();
@@ -309,30 +331,66 @@ export default function MaintenancePage() {
 
   async function completeJob(record: MaintenanceRecord) {
     if (!canEdit) return;
-    const supabase = createClient();
-    const { error: updateError } = await supabase
-      .from("maintenance_records")
-      .update({
-        status: "Closed",
-        completed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", record.id);
-    if (updateError) {
-      message.error(updateError.message);
-      return;
+    try {
+      const next = await completeMaintenanceJob({
+        maintenanceId: record.id,
+        machineUuid: record.machine_uuid,
+      });
+      await writeAuditLog({
+        profile,
+        action: "workflow",
+        entityType: "maintenance",
+        entityId: record.id,
+        summary: `ซ่อมเสร็จ ${record.title}`,
+      });
+      message.success(
+        next === "Running"
+          ? "ขั้นที่ 4 สำเร็จ: ซ่อมเสร็จ เครื่องกลับสู่กำลังทำงาน"
+          : `ปิดงานแล้ว — สถานะเครื่องเป็น ${next}`,
+      );
+      await load();
+      await refreshAlerts();
+    } catch (err) {
+      message.error(formatDbError(err, "ปิดงานซ่อมไม่สำเร็จ"));
     }
-    await syncMachineAfterMaintenanceChange(record.machine_uuid, "Closed");
-    await writeAuditLog({
-      profile,
-      action: "workflow",
-      entityType: "maintenance",
-      entityId: record.id,
-      summary: `ปิดงานซ่อม ${record.title}`,
-    });
-    message.success("ซ่อมเสร็จแล้ว");
-    await load();
-    await refreshAlerts();
+  }
+
+  async function startWork(record: MaintenanceRecord) {
+    if (!canEdit) return;
+    try {
+      await startMaintenanceWork(record.id);
+      await writeAuditLog({
+        profile,
+        action: "workflow",
+        entityType: "maintenance",
+        entityId: record.id,
+        summary: `เริ่มซ่อม ${record.title}`,
+      });
+      message.success("ขั้นที่ 3: เริ่มดำเนินการซ่อมแล้ว");
+      await load();
+      await refreshAlerts();
+    } catch (err) {
+      message.error(formatDbError(err, "เริ่มงานไม่สำเร็จ"));
+    }
+  }
+
+  async function waitPart(record: MaintenanceRecord) {
+    if (!canEdit) return;
+    try {
+      await markWaitingPart(record.id);
+      await writeAuditLog({
+        profile,
+        action: "workflow",
+        entityType: "maintenance",
+        entityId: record.id,
+        summary: `รออะไหล่ ${record.title}`,
+      });
+      message.success("ตั้งสถานะรออะไหล่แล้ว");
+      await load();
+      await refreshAlerts();
+    } catch (err) {
+      message.error(formatDbError(err, "ตั้งรออะไหล่ไม่สำเร็จ"));
+    }
   }
 
   const columns = [
@@ -367,7 +425,7 @@ export default function MaintenancePage() {
     {
       title: "จัดการ",
       key: "actions",
-      width: 220,
+      width: 320,
       render: (_: unknown, row: MaintenanceRecord) =>
         !canEdit ? (
           <Tag>ดูอย่างเดียว</Tag>
@@ -380,9 +438,28 @@ export default function MaintenancePage() {
             >
               แก้ไข
             </Button>
+            {(row.status === "Open" || row.status === "Waiting Part") && (
+              <Button
+                type="link"
+                icon={<PlayCircleOutlined />}
+                onClick={() => startWork(row)}
+              >
+                เริ่มซ่อม
+              </Button>
+            )}
+            {row.status === "In Progress" && (
+              <Button
+                type="link"
+                icon={<PauseCircleOutlined />}
+                onClick={() => waitPart(row)}
+              >
+                รออะไหล่
+              </Button>
+            )}
             {row.status !== "Closed" && (
               <Popconfirm
-                title="ปิดงานซ่อมนี้?"
+                title="ขั้นที่ 4: ซ่อมเสร็จ?"
+                description="จะปิดงานซ่อม และปิด Alarm ที่กำลังดำเนินการของเครื่องนี้"
                 okText="ซ่อมเสร็จ"
                 cancelText="ยกเลิก"
                 onConfirm={() => completeJob(row)}
@@ -403,14 +480,16 @@ export default function MaintenancePage() {
         <PageIntro
           eyebrow="Maintenance"
           title="งานบำรุงรักษา"
-          description="จัดการงานซ่อม/PM รวมสถานะรออะไหล่ (Waiting Part) และมอบหมายช่าง"
+          description="ขั้นที่ 3–4: เริ่มซ่อม → (รออะไหล่ถ้าจำเป็น) → ซ่อมเสร็จ เครื่องจะกลับปกติเมื่อไม่มีงาน/Alarm ค้าง"
         />
         {canEdit && (
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            เพิ่มงานซ่อม
+            เพิ่มงาน PM
           </Button>
         )}
       </div>
+
+      <WorkflowSteps current={2} />
 
       {error && !modalOpen && (
         <Alert

@@ -45,6 +45,7 @@ import {
   markAlarmResolved,
   syncMachineAfterAlarmChange,
 } from "@/lib/workflow";
+import { WorkflowSteps } from "@/components/WorkflowSteps";
 
 const emptyForm = {
   machine_uuid: "",
@@ -208,7 +209,8 @@ export default function AlarmsPage() {
       alarm_code: form.alarm_code.trim(),
       alarm_description: form.alarm_description.trim(),
       cause: form.cause.trim() || null,
-      status: form.status,
+      // สร้างใหม่บังคับ Open — เปลี่ยนสถานะผ่านปุ่ม workflow เท่านั้น
+      status: (editingId ? form.status : "Open") as AlarmStatus,
       occurred_at: form.occurred_at
         ? new Date(form.occurred_at).toISOString()
         : new Date().toISOString(),
@@ -256,7 +258,7 @@ export default function AlarmsPage() {
         message.success("บันทึก Alarm แล้ว");
       }
 
-      await syncMachineAfterAlarmChange(form.machine_uuid, form.status);
+      await syncMachineAfterAlarmChange(form.machine_uuid);
       closeModal();
       await load();
       await refreshAlerts();
@@ -267,6 +269,10 @@ export default function AlarmsPage() {
 
   async function startRepair(alarm: Alarm) {
     if (!canEdit) return;
+    if (alarm.status !== "Open") {
+      message.warning("เปิดงานซ่อมได้เฉพาะ Alarm สถานะ「เปิด」");
+      return;
+    }
     try {
       await createMaintenanceFromAlarm({
         alarmId: alarm.id,
@@ -282,7 +288,7 @@ export default function AlarmsPage() {
         entityId: alarm.id,
         summary: `เปิดงานซ่อมจาก Alarm ${alarm.alarm_code}`,
       });
-      message.success("เปิดงานซ่อมแล้ว และอัปเดตสถานะ Alarm/เครื่องจักร");
+      message.success("ขั้นที่ 2 สำเร็จ: เปิดงานซ่อมแล้ว — ไปดำเนินการที่เมนูบำรุงรักษา");
       await load();
       await refreshAlerts();
       router.push("/maintenance");
@@ -294,22 +300,26 @@ export default function AlarmsPage() {
   async function resolveAlarm(alarm: Alarm) {
     if (!canEdit) return;
     try {
+      const closeMaint = alarm.status === "In Progress";
       const next = await markAlarmResolved({
         alarmId: alarm.id,
         machineUuid: alarm.machine_uuid,
-        closeOpenMaintenance: true,
+        closeOpenMaintenance: closeMaint,
       });
       await writeAuditLog({
         profile,
         action: "workflow",
         entityType: "alarm",
         entityId: alarm.id,
-        summary: `ปิด Alarm ${alarm.alarm_code}`,
+        summary:
+          alarm.status === "Open"
+            ? `ปิด Alarm ${alarm.alarm_code} (ไม่เปิดงานซ่อม)`
+            : `ปิด Alarm ${alarm.alarm_code} พร้อมงานซ่อม`,
       });
       message.success(
         next === "Running"
-          ? "ปิด Alarm แล้ว เครื่องกลับสู่สถานะกำลังทำงาน"
-          : `ปิด Alarm แล้ว สถานะเครื่องเป็น ${next}`,
+          ? "ขั้นที่ 4 สำเร็จ: เครื่องกลับสู่สถานะกำลังทำงาน"
+          : `ปิดแล้ว — สถานะเครื่องเป็น ${next} (ยังมีงาน/Alarm อื่นค้าง)`,
       );
       await load();
       await refreshAlerts();
@@ -368,11 +378,11 @@ export default function AlarmsPage() {
             >
               แก้ไข
             </Button>
-            {alarm.status !== "Closed" && (
+            {alarm.status === "Open" && (
               <>
                 <Popconfirm
-                  title="เปิดงานซ่อมจาก Alarm นี้?"
-                  description="ระบบจะสร้างงานบำรุงรักษา และตั้งเครื่องเป็นซ่อมบำรุง"
+                  title="ขั้นที่ 2: เปิดงานซ่อม?"
+                  description="จะสร้างงานบำรุงรักษา และตั้งเครื่องเป็น「ซ่อมบำรุง」"
                   okText="เปิดงานซ่อม"
                   cancelText="ยกเลิก"
                   onConfirm={() => startRepair(alarm)}
@@ -382,14 +392,36 @@ export default function AlarmsPage() {
                   </Button>
                 </Popconfirm>
                 <Popconfirm
-                  title="ปิด Alarm และทำให้เครื่องกลับปกติ?"
-                  description="จะปิด Alarm และปิดงานซ่อมที่ค้างของเครื่องนี้"
-                  okText="ปิดและกลับปกติ"
+                  title="ปิด Alarm โดยไม่ซ่อม?"
+                  description="ใช้เมื่อแจ้งผิด หรือปัญหาหายเอง — จะไม่สร้างงานซ่อม"
+                  okText="ปิด Alarm"
                   cancelText="ยกเลิก"
                   onConfirm={() => resolveAlarm(alarm)}
                 >
                   <Button type="link" icon={<CheckCircleOutlined />}>
-                    ปิด/กลับปกติ
+                    ปิดโดยไม่ซ่อม
+                  </Button>
+                </Popconfirm>
+              </>
+            )}
+            {alarm.status === "In Progress" && (
+              <>
+                <Button
+                  type="link"
+                  icon={<ToolOutlined />}
+                  onClick={() => router.push("/maintenance")}
+                >
+                  ไปงานซ่อม (ขั้น 3)
+                </Button>
+                <Popconfirm
+                  title="ขั้นที่ 4: ซ่อมเสร็จและกลับปกติ?"
+                  description="จะปิด Alarm และปิดงานซ่อมที่ค้างของเครื่องนี้"
+                  okText="ซ่อมเสร็จ"
+                  cancelText="ยกเลิก"
+                  onConfirm={() => resolveAlarm(alarm)}
+                >
+                  <Button type="link" icon={<CheckCircleOutlined />}>
+                    ซ่อมเสร็จ/กลับปกติ
                   </Button>
                 </Popconfirm>
               </>
@@ -405,7 +437,7 @@ export default function AlarmsPage() {
         <PageIntro
           eyebrow="Alarm Record"
           title="บันทึก Alarm"
-          description="ขั้นที่ 1: แจ้งปัญหา → กด 'เปิดงานซ่อม' เพื่อสร้างงานบำรุงรักษา → ซ่อมเสร็จแล้วกด 'ปิด/กลับปกติ'"
+          description="ทำงานเป็นลำดับ: แจ้ง Alarm → เปิดงานซ่อม → ซ่อมที่เมนูบำรุงรักษา → ซ่อมเสร็จกลับปกติ"
         />
         {canEdit && (
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
@@ -413,6 +445,8 @@ export default function AlarmsPage() {
           </Button>
         )}
       </div>
+
+      <WorkflowSteps current={0} />
 
       {error && !modalOpen && (
         <Alert
@@ -530,9 +564,14 @@ export default function AlarmsPage() {
               }
             />
           </Form.Item>
-          <Form.Item label="สถานะ" style={{ marginBottom: 0 }}>
+          <Form.Item
+            label="สถานะ"
+            style={{ marginBottom: 0 }}
+            extra="เปลี่ยนสถานะด้วยปุ่ม「เปิดงานซ่อม」หรือ「ซ่อมเสร็จ」ด้านนอก"
+          >
             <Select
-              value={form.status}
+              value={editingId ? form.status : "Open"}
+              disabled={!editingId}
               onChange={(status) => setForm((f) => ({ ...f, status }))}
               options={ALARM_STATUSES.map((status) => ({
                 value: status,
