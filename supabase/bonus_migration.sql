@@ -38,10 +38,11 @@ create index if not exists idx_alarms_occurred on public.alarms (occurred_at);
 alter table public.audit_logs enable row level security;
 
 drop policy if exists "Authenticated can read audit" on public.audit_logs;
-create policy "Authenticated can read audit"
+drop policy if exists "Staff can read audit" on public.audit_logs;
+create policy "Staff can read audit"
   on public.audit_logs for select
   to authenticated
-  using (true);
+  using (public.current_user_role() in ('admin', 'technician'));
 
 drop policy if exists "Authenticated can insert audit" on public.audit_logs;
 create policy "Authenticated can insert audit"

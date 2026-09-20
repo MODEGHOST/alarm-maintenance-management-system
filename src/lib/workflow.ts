@@ -5,8 +5,8 @@ import { OPEN_MAINTENANCE_STATUSES } from "@/lib/types";
 /** ลำดับสถานะงานซ่อมที่อนุญาต */
 export const MAINTENANCE_NEXT: Record<MaintenanceStatus, MaintenanceStatus[]> =
   {
-    Open: ["Open", "In Progress", "Waiting Part", "Closed"],
-    "In Progress": ["In Progress", "Waiting Part", "Closed", "Open"],
+    Open: ["Open", "In Progress", "Closed"],
+    "In Progress": ["In Progress", "Waiting Part", "Closed"],
     "Waiting Part": ["Waiting Part", "In Progress", "Closed"],
     Closed: ["Closed", "Open"],
   };

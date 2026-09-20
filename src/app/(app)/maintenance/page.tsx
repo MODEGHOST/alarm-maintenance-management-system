@@ -283,6 +283,44 @@ export default function MaintenancePage() {
     };
 
     try {
+      // ปิดงานผ่านฟอร์ม = ใช้ workflow เดียวกับปุ่มซ่อมเสร็จ (ปิด Alarm ที่กำลังดำเนินการด้วย)
+      if (editingId && form.status === "Closed") {
+        const current = records.find((r) => r.id === editingId);
+        if (current && current.status !== "Closed") {
+          const next = await completeMaintenanceJob({
+            maintenanceId: editingId,
+            machineUuid: form.machine_uuid,
+          });
+          // อัปเดตฟิลด์อื่นที่ไม่ใช่ status ถ้ามีการแก้
+          await supabase
+            .from("maintenance_records")
+            .update({
+              title: payload.title,
+              description: payload.description,
+              technician_id: payload.technician_id,
+              scheduled_at: payload.scheduled_at,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", editingId);
+          await writeAuditLog({
+            profile,
+            action: "workflow",
+            entityType: "maintenance",
+            entityId: editingId,
+            summary: `ซ่อมเสร็จ (ผ่านฟอร์ม) ${payload.title}`,
+          });
+          message.success(
+            next === "Running"
+              ? "ขั้นที่ 4 สำเร็จ: ซ่อมเสร็จ เครื่องกลับสู่กำลังทำงาน"
+              : `ปิดงานแล้ว — สถานะเครื่องเป็น ${next}`,
+          );
+          closeModal();
+          await load();
+          await refreshAlerts();
+          return;
+        }
+      }
+
       if (editingId) {
         const { error: updateError } = await supabase
           .from("maintenance_records")
@@ -303,7 +341,11 @@ export default function MaintenancePage() {
       } else {
         const { data, error: insertError } = await supabase
           .from("maintenance_records")
-          .insert(payload)
+          .insert({
+            ...payload,
+            status: form.status === "Closed" ? "Open" : form.status,
+            completed_at: null,
+          })
           .select("id")
           .single();
         if (insertError) {

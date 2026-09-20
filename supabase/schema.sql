@@ -232,12 +232,12 @@ create policy "Staff can update maintenance"
   to authenticated
   using (public.current_user_role() in ('admin', 'technician'));
 
--- Audit logs
+-- Audit logs (เฉพาะ Admin / Technician อ่านได้ — ตรงกับ UI)
 drop policy if exists "Authenticated can read audit" on public.audit_logs;
-create policy "Authenticated can read audit"
+create policy "Staff can read audit"
   on public.audit_logs for select
   to authenticated
-  using (true);
+  using (public.current_user_role() in ('admin', 'technician'));
 
 drop policy if exists "Authenticated can insert audit" on public.audit_logs;
 create policy "Authenticated can insert audit"

@@ -39,7 +39,11 @@ export async function updateSession(request: NextRequest) {
     pathname.startsWith("/dashboard") ||
     pathname.startsWith("/machines") ||
     pathname.startsWith("/alarms") ||
-    pathname.startsWith("/maintenance");
+    pathname.startsWith("/maintenance") ||
+    pathname.startsWith("/history") ||
+    pathname.startsWith("/audit") ||
+    pathname.startsWith("/users") ||
+    pathname.startsWith("/technicians");
 
   if (!user && isProtected) {
     const redirectUrl = request.nextUrl.clone();
