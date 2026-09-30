@@ -1,7 +1,20 @@
+-- =============================================================================
 -- Alarm & Maintenance Management System
--- Run this SQL in Supabase SQL Editor (full schema)
+-- Target : Supabase (PostgreSQL 15+)
+-- Install : run this file once in Supabase Dashboard > SQL Editor
+--           If an older schema is already applied, also run
+--           supabase/bonus_migration.sql
+--           Demo rows: supabase/seed_demo.sql
+-- Same definitions as supabase/schema.sql
+-- =============================================================================
 
--- Profiles (linked to auth.users)
+-- =============================================================================
+-- 01. PROFILES (linked to Supabase Auth)
+-- =============================================================================
+-- Signup cannot grant admin. handle_new_user() keeps only technician or viewer.
+-- An existing admin changes roles from the app; profile updates cannot
+-- self-promote.
+
 create table if not exists public.profiles (
   id uuid primary key references auth.users (id) on delete cascade,
   email text,
@@ -14,7 +27,11 @@ create table if not exists public.profiles (
   created_at timestamptz not null default now()
 );
 
--- Machines
+-- =============================================================================
+-- 02. MACHINES
+-- =============================================================================
+-- Status values match the course specification: Running / Stop / Alarm / Maintenance.
+
 create table if not exists public.machines (
   id uuid primary key default gen_random_uuid(),
   machine_id text not null unique,
@@ -26,7 +43,10 @@ create table if not exists public.machines (
   updated_at timestamptz not null default now()
 );
 
--- Alarms
+-- =============================================================================
+-- 03. ALARMS
+-- =============================================================================
+
 create table if not exists public.alarms (
   id uuid primary key default gen_random_uuid(),
   machine_uuid uuid not null references public.machines (id) on delete cascade,
@@ -40,7 +60,12 @@ create table if not exists public.alarms (
   updated_at timestamptz not null default now()
 );
 
--- Maintenance records (includes Waiting Part)
+-- =============================================================================
+-- 04. MAINTENANCE RECORDS
+-- =============================================================================
+-- Waiting Part is a required pause while a spare is unavailable.
+-- Closing a job returns the machine to Running only when no open alarm remains.
+
 create table if not exists public.maintenance_records (
   id uuid primary key default gen_random_uuid(),
   machine_uuid uuid not null references public.machines (id) on delete cascade,
@@ -54,7 +79,10 @@ create table if not exists public.maintenance_records (
   updated_at timestamptz not null default now()
 );
 
--- Audit log
+-- =============================================================================
+-- 05. AUDIT LOG
+-- =============================================================================
+
 create table if not exists public.audit_logs (
   id uuid primary key default gen_random_uuid(),
   actor_id uuid references public.profiles (id),
@@ -76,7 +104,10 @@ create index if not exists idx_machines_status on public.machines (status);
 create index if not exists idx_audit_created on public.audit_logs (created_at desc);
 create index if not exists idx_profiles_role on public.profiles (role);
 
--- Auto-create profile on signup (ห้ามยกระดับเป็น admin จาก metadata)
+-- =============================================================================
+-- 06. SIGNUP TRIGGER
+-- =============================================================================
+
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -110,17 +141,11 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
 
--- Allow authenticated users to insert their own profile (fallback from app)
-drop policy if exists "Users can insert own profile" on public.profiles;
-create policy "Users can insert own profile"
-  on public.profiles for insert
-  to authenticated
-  with check (
-    auth.uid() = id
-    and role in ('technician', 'viewer')
-  );
+-- =============================================================================
+-- 07. ROLE HELPER
+-- =============================================================================
+-- SECURITY DEFINER so policies can read profiles without RLS recursion.
 
--- Helper: current user role
 create or replace function public.current_user_role()
 returns text
 language sql
@@ -131,14 +156,28 @@ as $$
   select role from public.profiles where id = auth.uid();
 $$;
 
--- RLS
+-- =============================================================================
+-- 08. ROW LEVEL SECURITY
+-- =============================================================================
+-- Viewer is read-only on operational tables.
+-- Admin manages machines and any profile.
+-- Admin and Technician write alarms, maintenance, and may read the audit log.
+
 alter table public.profiles enable row level security;
 alter table public.machines enable row level security;
 alter table public.alarms enable row level security;
 alter table public.maintenance_records enable row level security;
 alter table public.audit_logs enable row level security;
 
--- Profiles policies
+drop policy if exists "Users can insert own profile" on public.profiles;
+create policy "Users can insert own profile"
+  on public.profiles for insert
+  to authenticated
+  with check (
+    auth.uid() = id
+    and role in ('technician', 'viewer')
+  );
+
 drop policy if exists "Users can read profiles" on public.profiles;
 create policy "Users can read profiles"
   on public.profiles for select
@@ -165,7 +204,6 @@ create policy "Admin can update any profile"
   using (public.current_user_role() = 'admin')
   with check (public.current_user_role() = 'admin');
 
--- Machines policies
 drop policy if exists "Authenticated can read machines" on public.machines;
 create policy "Authenticated can read machines"
   on public.machines for select
@@ -190,7 +228,6 @@ create policy "Admin can delete machines"
   to authenticated
   using (public.current_user_role() = 'admin');
 
--- Alarms policies (viewer = read only)
 drop policy if exists "Authenticated can read alarms" on public.alarms;
 create policy "Authenticated can read alarms"
   on public.alarms for select
@@ -211,7 +248,6 @@ create policy "Staff can update alarms"
   to authenticated
   using (public.current_user_role() in ('admin', 'technician'));
 
--- Maintenance policies (viewer = read only)
 drop policy if exists "Authenticated can read maintenance" on public.maintenance_records;
 create policy "Authenticated can read maintenance"
   on public.maintenance_records for select
@@ -232,7 +268,6 @@ create policy "Staff can update maintenance"
   to authenticated
   using (public.current_user_role() in ('admin', 'technician'));
 
--- Audit logs (เฉพาะ Admin / Technician อ่านได้ — ตรงกับ UI)
 drop policy if exists "Authenticated can read audit" on public.audit_logs;
 create policy "Staff can read audit"
   on public.audit_logs for select
@@ -245,7 +280,14 @@ create policy "Authenticated can insert audit"
   to authenticated
   with check (true);
 
--- Technician/Admin คำนวณสถานะเครื่องได้ผ่าน RPC (bypass RLS เฉพาะฟังก์ชันนี้)
+-- =============================================================================
+-- 09. MACHINE STATUS RPC
+-- =============================================================================
+-- Machines updates are admin-only under RLS. Technicians still need the
+-- derived status after a workflow step, so this function checks auth.uid()
+-- and updates the one machine. Open maintenance wins over an open alarm.
+-- If neither remains, the machine returns to Running.
+
 create or replace function public.resolve_machine_status(p_machine uuid)
 returns text
 language plpgsql
@@ -287,4 +329,3 @@ $$;
 
 revoke all on function public.resolve_machine_status(uuid) from public;
 grant execute on function public.resolve_machine_status(uuid) to authenticated;
-

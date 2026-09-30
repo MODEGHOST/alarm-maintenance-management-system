@@ -89,7 +89,7 @@ npm install
 
 1. สร้างโปรเจกต์ที่ [supabase.com](https://supabase.com)
 2. เปิด SQL Editor แล้วรันตามลำดับ:
-   - `supabase/schema.sql`
+   - `01_schema.sql` (หรือ `supabase/schema.sql` ซึ่งเป็นชุดเดียวกัน)
    - ถ้ารัน schema เก่าไปแล้ว → `supabase/bonus_migration.sql`
    - (แนะนำ) `supabase/seed_demo.sql` สำหรับข้อมูลสาธิต
 3. ปิด Confirm email ที่ Authentication → Providers → Email (เพื่อเทสง่าย)
@@ -177,13 +177,14 @@ npm run dev
 
 - **GitHub:** https://github.com/MODEGHOST/alarm-maintenance-management-system
 - **Vercel:** _(pending)_
-- **Schema:** `supabase/schema.sql`
+- **Schema:** `01_schema.sql` (ชุดเดียวกันกับ `supabase/schema.sql`)
 - **Migration โบนัส:** `supabase/bonus_migration.sql`
 - **Seed demo:** `supabase/seed_demo.sql`
+- **รายงานการใช้ AI:** `AI_USAGE_REPORT.md`
 
 ## การใช้ AI ในการพัฒนา
 
 ใช้ Cursor AI ช่วยวิเคราะห์โจทย์ ออกแบบฐานข้อมูล เขียนโค้ด UI/UX, SQL, CI, README และแก้ bug  
 ผู้พัฒนาเป็นผู้รับผิดชอบความถูกต้อง ความปลอดภัย และการทดสอบก่อนส่ง
 
-รายละเอียดเพิ่มเติม: `docs/AI_USAGE.md`
+รายละเอียดเพิ่มเติม: `AI_USAGE_REPORT.md`

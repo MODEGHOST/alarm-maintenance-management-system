@@ -129,3 +129,46 @@ create policy "Users can insert own profile"
     auth.uid() = id
     and role in ('technician', 'viewer')
   );
+
+-- Technician/Admin คำนวณสถานะเครื่องได้ผ่าน RPC
+create or replace function public.resolve_machine_status(p_machine uuid)
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  alarm_count int;
+  maint_count int;
+  next_status text;
+begin
+  if auth.uid() is null then
+    raise exception 'not authenticated';
+  end if;
+
+  select count(*) into alarm_count
+  from public.alarms
+  where machine_uuid = p_machine and status <> 'Closed';
+
+  select count(*) into maint_count
+  from public.maintenance_records
+  where machine_uuid = p_machine and status <> 'Closed';
+
+  if maint_count > 0 then
+    next_status := 'Maintenance';
+  elsif alarm_count > 0 then
+    next_status := 'Alarm';
+  else
+    next_status := 'Running';
+  end if;
+
+  update public.machines
+  set status = next_status, updated_at = now()
+  where id = p_machine;
+
+  return next_status;
+end;
+$$;
+
+revoke all on function public.resolve_machine_status(uuid) from public;
+grant execute on function public.resolve_machine_status(uuid) to authenticated;
